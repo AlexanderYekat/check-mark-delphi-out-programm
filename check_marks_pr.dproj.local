@@ -1,0 +1,10 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<BorlandProject>
+	<Transactions>
+    <Transaction>1899.12.30 00:00:00.000.986,=C:\Users\Enduro\Documents\Embarcadero\Studio\Projects\Unit3.pas</Transaction>
+    <Transaction>2025.10.10 10:07:34.444,=C:\Users\Enduro\Documents\Embarcadero\Studio\Projects\Unit3.pas</Transaction>
+    <Transaction>2025.10.10 10:08:28.420,C:\Users\Enduro\Documents\fl\lancer\атол1сСамоп202502\new20251009\delphi\check_marks.dfm=C:\Users\Enduro\Documents\Embarcadero\Studio\Projects\Unit3.dfm</Transaction>
+    <Transaction>2025.10.10 10:08:28.420,C:\Users\Enduro\Documents\fl\lancer\атол1сСамоп202502\new20251009\delphi\check_marks.pas=C:\Users\Enduro\Documents\Embarcadero\Studio\Projects\Unit3.pas</Transaction>
+    <Transaction>2025.10.10 10:08:36.351,C:\Users\Enduro\Documents\fl\lancer\атол1сСамоп202502\new20251009\delphi\check_marks_pr.dproj=C:\Users\Enduro\Documents\Embarcadero\Studio\Projects\Project3.dproj</Transaction>
+  </Transactions>
+</BorlandProject>

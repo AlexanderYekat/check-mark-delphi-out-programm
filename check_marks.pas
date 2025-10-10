@@ -30,6 +30,16 @@ const
   PLANNED_STATUS_OF_UNCHANGED = 'статус товара не изменился';
 
 type
+  // Структура для хранения результата проверки марки
+  TMarkCheckResult = record
+    MarkCode: string;
+    CheckTime: TDateTime;
+    Success: Boolean;
+    ResultCode: Integer;
+    ResultDescription: string;
+    JSONResponse: string;
+  end;
+
   TCheckMarksForm = class(TForm)
     MemoMarks: TMemo;
     EditSellOrReturn: TEdit;
@@ -90,11 +100,18 @@ type
     procedure ButtonGetTasksClick(Sender: TObject);
     procedure ButtonGetNextTaskClick(Sender: TObject);
     procedure ButtonSaveResultTaskClick(Sender: TObject);
+    procedure ButtonCreateNewSessionClick(Sender: TObject);
+    procedure ButtonFinishSessionClick(Sender: TObject);
   private
     { Private declarations }
     fptr: OLEVariant;
+    FMarkCheckCache: TArray<TMarkCheckResult>; // Кэш результатов проверки марок
+    FSessionActive: Boolean; // Флаг активной сессии
     function CreateJSONAcceptOrDeclineOrCancel(ActionType: string): string;
     function RunProcessOnKKT(JSONRequest: string; var JSONResponse: string; var ErrorCode: Integer; var ErrorDescr: string): Boolean;
+    function FindMarkInCache(const MarkCode: string; out Result: TMarkCheckResult): Boolean;
+    procedure AddMarkToCache(const MarkResult: TMarkCheckResult);
+    procedure ClearMarkCache;
   public
     { Public declarations }
   end;
@@ -105,6 +122,41 @@ var
 implementation
 
 {$R *.dfm}
+
+// === ФУНКЦИИ РАБОТЫ С КЭШЕМ МАРОК ===
+
+// Поиск марки в кэше
+function TCheckMarksForm.FindMarkInCache(const MarkCode: string; out Result: TMarkCheckResult): Boolean;
+var
+  i: Integer;
+begin
+  Result := Default(TMarkCheckResult);
+  for i := 0 to High(FMarkCheckCache) do
+  begin
+    if FMarkCheckCache[i].MarkCode = MarkCode then
+    begin
+      Result := FMarkCheckCache[i];
+      Exit(True);
+    end;
+  end;
+  Exit(False);
+end;
+
+// Добавление результата проверки марки в кэш
+procedure TCheckMarksForm.AddMarkToCache(const MarkResult: TMarkCheckResult);
+begin
+  SetLength(FMarkCheckCache, Length(FMarkCheckCache) + 1);
+  FMarkCheckCache[High(FMarkCheckCache)] := MarkResult;
+end;
+
+// Очистка кэша марок
+procedure TCheckMarksForm.ClearMarkCache;
+begin
+  SetLength(FMarkCheckCache, 0);
+  FSessionActive := False;
+end;
+
+// === КОНЕЦ ФУНКЦИЙ РАБОТЫ С КЭШЕМ ===
 
 // Выполнение команды на ККТ через JSON (аналог функции 1С ВыполнитьЗаданиеJSON)
 function TCheckMarksForm.RunProcessOnKKT(JSONRequest: string; var JSONResponse: string; var ErrorCode: Integer; var ErrorDescr: string): Boolean;
@@ -185,11 +237,34 @@ var
     errorDescr: string;
     actionType: string;
     success: Boolean;
+    cachedResult: TMarkCheckResult;
+    markResult: TMarkCheckResult;
 begin
     // Очищаем результаты предыдущей проверки
     MemoJSONResultCheckOnKKT.Clear;
     ResultCodeCheckOnKKTEdit.Text := '0';
     ResultDescrCheckOnKKTEdit.Text := RESULT_COMMAND_OK;
+    
+    mark:=StringReplace(EditMark.Text, '\u001d', #29, [rfReplaceAll, rfIgnoreCase]);
+    
+    // ПРОВЕРЯЕМ КЭШ - если марка уже проверялась, берем результат из кэша
+    if FSessionActive and FindMarkInCache(mark, cachedResult) then
+    begin
+      MemoJSONResultCheckOnKKT.Lines.Add('=== РЕЗУЛЬТАТ ИЗ КЭША ===');
+      MemoJSONResultCheckOnKKT.Lines.Add('Марка уже проверялась ранее');
+      MemoJSONResultCheckOnKKT.Lines.Add('Время проверки: ' + DateTimeToStr(cachedResult.CheckTime));
+      MemoJSONResultCheckOnKKT.Lines.Add('');
+      MemoJSONResultCheckOnKKT.Lines.Add(cachedResult.JSONResponse);
+      ResultCodeCheckOnKKTEdit.Text := IntToStr(cachedResult.ResultCode);
+      ResultDescrCheckOnKKTEdit.Text := cachedResult.ResultDescription;
+      
+      if cachedResult.Success then
+        MemoJSONResultCheckOnKKT.Lines.Add('✓ Команда выполнена успешно (из кэша)')
+      else
+        MemoJSONResultCheckOnKKT.Lines.Add('✗ Ошибка выполнения команды (из кэша)');
+        
+      Exit;
+    end;
     
     statusPlannedOfMark:=fptr.LIBFPTR_MES_PIECE_SOLD;
     if ComboBoxCheckType.ItemIndex = 1 then begin
@@ -204,7 +279,6 @@ begin
     end;
 
     //mark := '014494550435306821QXYXSALGLMYQQ' + #29 + '91EE06' + #29 + '92YWCXbmK6SN8vvwoxZFk7WAY8WoJNMGGr6Cgtiuja04c=';
-    mark:=StringReplace(EditMark.Text, '\u001d', #29, [rfReplaceAll, rfIgnoreCase]);
     // Запускаем проверку КМ в синхронном режиме с таймаутом 2 минуты (120000 миллисекунд)
     fptr.setParam(fptr.LIBFPTR_PARAM_MARKING_CODE_TYPE, fptr.LIBFPTR_MCT12_AUTO);
     fptr.setParam(fptr.LIBFPTR_PARAM_MARKING_CODE, mark);
@@ -283,6 +357,22 @@ begin
       MemoJSONResultCheckOnKKT.Lines.Add('Команда выполнена успешно')
     else
       MemoJSONResultCheckOnKKT.Lines.Add('Ошибка выполнения команды');
+    
+    // СОХРАНЯЕМ РЕЗУЛЬТАТ В КЭШ
+    if FSessionActive then
+    begin
+      markResult.MarkCode := mark;
+      markResult.CheckTime := Now;
+      markResult.Success := success;
+      markResult.ResultCode := errorCode;
+      markResult.ResultDescription := errorDescr;
+      markResult.JSONResponse := jsonAnswer;
+      AddMarkToCache(markResult);
+      
+      MemoJSONResultCheckOnKKT.Lines.Add('');
+      MemoJSONResultCheckOnKKT.Lines.Add('✓ Результат сохранен в кэш');
+      MemoJSONResultCheckOnKKT.Lines.Add('Размер кэша: ' + IntToStr(Length(FMarkCheckCache)) + ' марок');
+    end;
 end;
 
 // Загрузка заданий из файловой системы
@@ -434,12 +524,95 @@ begin
   end;
 end;
 
-// Получить следующее задание из очереди
-procedure TCheckMarksForm.ButtonGetNextTaskClick(Sender: TObject);
+// Создать новую сессию - скопировать все задания из PENDING в PROCESSING
+procedure TCheckMarksForm.ButtonCreateNewSessionClick(Sender: TObject);
 var
   pendingFiles: TArray<string>;
-  firstFile: string;
+  completedFiles: TArray<string>;
+  filePath: string;
   newFilePath: string;
+  taskId: string;
+  copiedCount: Integer;
+begin
+  try
+    // Проверяем, что COMPLETED пуста
+    if TDirectory.Exists(TASKS_PATH_COMPLETED) then
+    begin
+      completedFiles := TDirectory.GetFiles(TASKS_PATH_COMPLETED, '*.json');
+      if Length(completedFiles) > 0 then
+      begin
+        ShowMessage('Сессия не может быть начата!' + #13#10 + 
+                    'В папке COMPLETED осталось ' + IntToStr(Length(completedFiles)) + ' файлов.' + #13#10 +
+                    'Клиент 1С должен сначала забрать результаты.');
+        Exit;
+      end;
+    end;
+    
+    // Проверяем, что PROCESSING пуста
+    if TDirectory.Exists(TASKS_PATH_PROCESSING) then
+    begin
+      if Length(TDirectory.GetFiles(TASKS_PATH_PROCESSING, '*.json')) > 0 then
+      begin
+        ShowMessage('В папке PROCESSING уже есть задания!' + #13#10 + 
+                    'Завершите текущую сессию перед началом новой.');
+        Exit;
+      end;
+    end;
+    
+    // Создаем папки, если их нет
+    if not TDirectory.Exists(TASKS_PATH_PENDING) then
+      TDirectory.CreateDirectory(TASKS_PATH_PENDING);
+    if not TDirectory.Exists(TASKS_PATH_PROCESSING) then
+      TDirectory.CreateDirectory(TASKS_PATH_PROCESSING);
+    
+    // Копируем все файлы из PENDING в PROCESSING
+    pendingFiles := TDirectory.GetFiles(TASKS_PATH_PENDING, '*.json');
+    
+    if Length(pendingFiles) = 0 then
+    begin
+      ShowMessage('Нет заданий в папке PENDING');
+      Exit;
+    end;
+    
+    copiedCount := 0;
+    for filePath in pendingFiles do
+    begin
+      taskId := TPath.GetFileNameWithoutExtension(filePath);
+      newFilePath := TASKS_PATH_PROCESSING + taskId + '.json';
+      TFile.Copy(filePath, newFilePath, True);
+      Inc(copiedCount);
+    end;
+    
+    // Очищаем кэш и устанавливаем флаг активной сессии
+    ClearMarkCache;
+    FSessionActive := True;
+    
+    MemoTasks.Clear;
+    MemoTasks.Lines.Add('=== НОВАЯ СЕССИЯ СОЗДАНА ===');
+    MemoTasks.Lines.Add('');
+    MemoTasks.Lines.Add('Скопировано заданий: ' + IntToStr(copiedCount));
+    MemoTasks.Lines.Add('Из: ' + TASKS_PATH_PENDING);
+    MemoTasks.Lines.Add('В: ' + TASKS_PATH_PROCESSING);
+    MemoTasks.Lines.Add('');
+    MemoTasks.Lines.Add('Статус сессии: АКТИВНА');
+    MemoTasks.Lines.Add('Кэш марок: ОЧИЩЕН');
+    MemoTasks.Lines.Add('=========================');
+    
+    ShowMessage('Сессия начата!' + #13#10 + 'Заданий к обработке: ' + IntToStr(copiedCount));
+    
+  except
+    on E: Exception do
+    begin
+      ShowMessage('Ошибка создания сессии: ' + E.Message);
+    end;
+  end;
+end;
+
+// Получить следующее задание из очереди PROCESSING
+procedure TCheckMarksForm.ButtonGetNextTaskClick(Sender: TObject);
+var
+  processingFiles: TArray<string>;
+  firstFile: string;
   taskId: string;
   fileContent: string;
   JSONValue: TJSONValue;
@@ -453,23 +626,24 @@ begin
   MemoAllMarksOfSession.Clear;
   
   try
-    // Проверяем наличие заданий в pending
-    if not TDirectory.Exists(TASKS_PATH_PENDING) then
+    // Проверяем наличие заданий в processing
+    if not TDirectory.Exists(TASKS_PATH_PROCESSING) then
     begin
-      MemoCurrentTask.Lines.Add('Папка заданий не найдена');
+      MemoCurrentTask.Lines.Add('Папка PROCESSING не найдена');
       Exit;
     end;
     
-    pendingFiles := TDirectory.GetFiles(TASKS_PATH_PENDING, '*.json');
+    processingFiles := TDirectory.GetFiles(TASKS_PATH_PROCESSING, '*.json');
     
-    if Length(pendingFiles) = 0 then
+    if Length(processingFiles) = 0 then
     begin
-      MemoCurrentTask.Lines.Add('Нет ожидающих заданий');
+      MemoCurrentTask.Lines.Add('Нет заданий в PROCESSING');
+      MemoCurrentTask.Lines.Add('Создайте новую сессию (кнопка "Создать новую сессию")');
       Exit;
     end;
     
     // Берем первый файл
-    firstFile := pendingFiles[0];
+    firstFile := processingFiles[0];
     taskId := TPath.GetFileNameWithoutExtension(firstFile);
     
     // Читаем содержимое
@@ -494,13 +668,6 @@ begin
         MemoCurrentTask.Lines.Add('Ошибка: нет маркировок в задании');
         Exit;
       end;
-      
-      // Переносим файл в processing
-      if not TDirectory.Exists(TASKS_PATH_PROCESSING) then
-        TDirectory.CreateDirectory(TASKS_PATH_PROCESSING);
-        
-      newFilePath := TASKS_PATH_PROCESSING + taskId + '.json';
-      TFile.Move(firstFile, newFilePath);
       
       // Отображаем информацию о задании
       MemoCurrentTask.Lines.Add('=== ТЕКУЩЕЕ ЗАДАНИЕ ===');
@@ -634,6 +801,105 @@ begin
     on E: Exception do
     begin
       ShowMessage('Ошибка сохранения результата: ' + E.Message);
+    end;
+  end;
+end;
+
+// Завершить сессию - удалить файлы из PENDING и очистить память
+procedure TCheckMarksForm.ButtonFinishSessionClick(Sender: TObject);
+var
+  pendingFiles: TArray<string>;
+  processingFiles: TArray<string>;
+  filePath: string;
+  deletedPending: Integer;
+  remainingProcessing: Integer;
+  cacheSize: Integer;
+begin
+  try
+    deletedPending := 0;
+    remainingProcessing := 0;
+    cacheSize := Length(FMarkCheckCache);
+    
+    MemoTasks.Clear;
+    MemoTasks.Lines.Add('=== ЗАВЕРШЕНИЕ СЕССИИ ===');
+    MemoTasks.Lines.Add('');
+    
+    // Проверяем, остались ли задания в PROCESSING
+    if TDirectory.Exists(TASKS_PATH_PROCESSING) then
+    begin
+      processingFiles := TDirectory.GetFiles(TASKS_PATH_PROCESSING, '*.json');
+      remainingProcessing := Length(processingFiles);
+      
+      if remainingProcessing > 0 then
+      begin
+        MemoTasks.Lines.Add('ВНИМАНИЕ! В папке PROCESSING осталось ' + IntToStr(remainingProcessing) + ' заданий!');
+        MemoTasks.Lines.Add('Завершите все задания перед завершением сессии.');
+        MemoTasks.Lines.Add('');
+        
+        if MessageDlg('В PROCESSING осталось ' + IntToStr(remainingProcessing) + ' заданий.' + #13#10 +
+                      'Все равно завершить сессию?', mtWarning, [mbYes, mbNo], 0) <> mrYes then
+        begin
+          Exit;
+        end;
+        
+        // Удаляем оставшиеся файлы из PROCESSING
+        for filePath in processingFiles do
+          TFile.Delete(filePath);
+          
+        MemoTasks.Lines.Add('Удалено файлов из PROCESSING: ' + IntToStr(remainingProcessing));
+      end
+      else
+      begin
+        MemoTasks.Lines.Add('✓ Все задания из PROCESSING выполнены');
+      end;
+    end;
+    
+    // Удаляем все файлы из PENDING
+    if TDirectory.Exists(TASKS_PATH_PENDING) then
+    begin
+      pendingFiles := TDirectory.GetFiles(TASKS_PATH_PENDING, '*.json');
+      
+      for filePath in pendingFiles do
+      begin
+        TFile.Delete(filePath);
+        Inc(deletedPending);
+      end;
+      
+      if deletedPending > 0 then
+        MemoTasks.Lines.Add('Удалено файлов из PENDING: ' + IntToStr(deletedPending))
+      else
+        MemoTasks.Lines.Add('✓ Папка PENDING уже пуста');
+    end;
+    
+    MemoTasks.Lines.Add('');
+    MemoTasks.Lines.Add('--- ОЧИСТКА ПАМЯТИ ---');
+    MemoTasks.Lines.Add('Размер кэша марок до очистки: ' + IntToStr(cacheSize));
+    
+    // Очищаем кэш марок и завершаем сессию
+    ClearMarkCache;
+    
+    MemoTasks.Lines.Add('✓ Кэш марок очищен');
+    MemoTasks.Lines.Add('✓ Флаг сессии сброшен');
+    MemoTasks.Lines.Add('');
+    MemoTasks.Lines.Add('=== СЕССИЯ ЗАВЕРШЕНА ===');
+    MemoTasks.Lines.Add('');
+    MemoTasks.Lines.Add('Для начала новой сессии:');
+    MemoTasks.Lines.Add('1. Клиент 1С должен забрать результаты из COMPLETED');
+    MemoTasks.Lines.Add('2. Нажмите "Создать новую сессию"');
+    
+    // Очищаем поля текущего задания
+    EditCurrentIDOfTask.Text := '';
+    MemoCurrentTask.Clear;
+    MemoAllMarksOfSession.Clear;
+    
+    ShowMessage('Сессия завершена!' + #13#10 + 
+                'Удалено из PENDING: ' + IntToStr(deletedPending) + #13#10 +
+                'Кэш марок очищен');
+    
+  except
+    on E: Exception do
+    begin
+      ShowMessage('Ошибка завершения сессии: ' + E.Message);
     end;
   end;
 end;

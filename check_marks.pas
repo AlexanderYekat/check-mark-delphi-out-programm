@@ -4,7 +4,7 @@ interface
 
 uses
   Winapi.Windows, Winapi.Messages, System.SysUtils, System.Variants, System.Classes, Vcl.Graphics,
-  Vcl.Controls, Vcl.Forms, Vcl.Dialogs, Vcl.StdCtrls, ComObj, System.JSON;
+  Vcl.Controls, Vcl.Forms, Vcl.Dialogs, Vcl.StdCtrls, ComObj, System.JSON, System.IOUtils;
 
 const
   DRIVER_NOT_INIT = 'не инициализирован';
@@ -15,6 +15,11 @@ const
   RESULT_COMMAND_OK = 'OK';
   TYPE_OF_CHECK_SELL = 'sell';
   TYPE_OF_CHECK_RETURN = 'return';
+  
+  // Пути к папкам заданий
+  TASKS_PATH_PENDING = 'c:\share\tasks\pending\';
+  TASKS_PATH_PROCESSING = 'c:\share\tasks\processing\';
+  TASKS_PATH_COMPLETED = 'c:\share\tasks\completed\';
 
   PLANNED_STATUS_OF_MARK_PIECE_SOLD = 'штучный товар, реализован';
   PLANNED_STATUS_OF_MARK_DRY_FOR_SALE = 'мерный товар, в стадии реализации';
@@ -82,6 +87,9 @@ type
     procedure ButtonCheckStatusKKTClick(Sender: TObject);
     procedure ButtonOpenShiftIfNeedClick(Sender: TObject);
     procedure CheckMarkOnKKTButtonClick(Sender: TObject);
+    procedure ButtonGetTasksClick(Sender: TObject);
+    procedure ButtonGetNextTaskClick(Sender: TObject);
+    procedure ButtonSaveResultTaskClick(Sender: TObject);
   private
     { Private declarations }
     fptr: OLEVariant;
@@ -275,6 +283,359 @@ begin
       MemoJSONResultCheckOnKKT.Lines.Add('Команда выполнена успешно')
     else
       MemoJSONResultCheckOnKKT.Lines.Add('Ошибка выполнения команды');
+end;
+
+// Загрузка заданий из файловой системы
+procedure TCheckMarksForm.ButtonGetTasksClick(Sender: TObject);
+var
+  pendingFiles: TArray<string>;
+  processingFiles: TArray<string>;
+  completedFiles: TArray<string>;
+  filePath: string;
+  fileContent: string;
+  JSONValue: TJSONValue;
+  JSONObj: TJSONObject;
+  JSONArray: TJSONArray;
+  markingCodes: TJSONArray;
+  sellOrReturn: string;
+  taskId: string;
+  i: Integer;
+  totalTasks: Integer;
+begin
+  MemoTasks.Clear;
+  MemoTasks.Lines.Add('=== ЗАГРУЗКА ЗАДАНИЙ ===');
+  MemoTasks.Lines.Add('');
+  
+  totalTasks := 0;
+  
+  try
+    // Создаем папки, если их нет
+    if not TDirectory.Exists(TASKS_PATH_PENDING) then
+      TDirectory.CreateDirectory(TASKS_PATH_PENDING);
+    if not TDirectory.Exists(TASKS_PATH_PROCESSING) then
+      TDirectory.CreateDirectory(TASKS_PATH_PROCESSING);
+    if not TDirectory.Exists(TASKS_PATH_COMPLETED) then
+      TDirectory.CreateDirectory(TASKS_PATH_COMPLETED);
+    
+    // === ЗАГРУЖАЕМ ЗАДАНИЯ ИЗ PENDING ===
+    MemoTasks.Lines.Add('--- ОЖИДАЮЩИЕ ЗАДАНИЯ (PENDING) ---');
+    pendingFiles := TDirectory.GetFiles(TASKS_PATH_PENDING, '*.json');
+    
+    if Length(pendingFiles) = 0 then
+      MemoTasks.Lines.Add('Нет ожидающих заданий')
+    else
+    begin
+      for filePath in pendingFiles do
+      begin
+        taskId := TPath.GetFileNameWithoutExtension(filePath);
+        
+        try
+          fileContent := TFile.ReadAllText(filePath, TEncoding.UTF8);
+          JSONValue := TJSONObject.ParseJSONValue(fileContent);
+          
+          if Assigned(JSONValue) and (JSONValue is TJSONObject) then
+          begin
+            JSONObj := JSONValue as TJSONObject;
+            
+            // Извлекаем sellOrReturn
+            if JSONObj.TryGetValue<string>('sellOrReturn', sellOrReturn) then
+            else
+              sellOrReturn := 'sell';
+            
+            // Извлекаем массив маркировок
+            if JSONObj.TryGetValue<TJSONArray>('markingCodes', markingCodes) then
+            begin
+              MemoTasks.Lines.Add('');
+              MemoTasks.Lines.Add('Task ID: ' + taskId);
+              MemoTasks.Lines.Add('Статус: PENDING');
+              MemoTasks.Lines.Add('Операция: ' + sellOrReturn);
+              MemoTasks.Lines.Add('Количество марок: ' + IntToStr(markingCodes.Count));
+              
+              // Показываем первые 3 марки
+              for i := 0 to Min(2, markingCodes.Count - 1) do
+              begin
+                MemoTasks.Lines.Add('  Марка ' + IntToStr(i + 1) + ': ' + markingCodes.Items[i].Value);
+              end;
+              
+              if markingCodes.Count > 3 then
+                MemoTasks.Lines.Add('  ... и ещё ' + IntToStr(markingCodes.Count - 3) + ' марок');
+              
+              Inc(totalTasks);
+            end;
+            
+            JSONValue.Free;
+          end;
+        except
+          on E: Exception do
+            MemoTasks.Lines.Add('Ошибка чтения файла ' + taskId + ': ' + E.Message);
+        end;
+      end;
+    end;
+    
+    // === ЗАГРУЖАЕМ ЗАДАНИЯ ИЗ PROCESSING ===
+    MemoTasks.Lines.Add('');
+    MemoTasks.Lines.Add('--- ЗАДАНИЯ В ОБРАБОТКЕ (PROCESSING) ---');
+    processingFiles := TDirectory.GetFiles(TASKS_PATH_PROCESSING, '*.json');
+    
+    if Length(processingFiles) = 0 then
+      MemoTasks.Lines.Add('Нет заданий в обработке')
+    else
+    begin
+      for filePath in processingFiles do
+      begin
+        taskId := TPath.GetFileNameWithoutExtension(filePath);
+        
+        try
+          fileContent := TFile.ReadAllText(filePath, TEncoding.UTF8);
+          JSONValue := TJSONObject.ParseJSONValue(fileContent);
+          
+          if Assigned(JSONValue) and (JSONValue is TJSONObject) then
+          begin
+            JSONObj := JSONValue as TJSONObject;
+            
+            if JSONObj.TryGetValue<string>('sellOrReturn', sellOrReturn) then
+            else
+              sellOrReturn := 'sell';
+            
+            if JSONObj.TryGetValue<TJSONArray>('markingCodes', markingCodes) then
+            begin
+              MemoTasks.Lines.Add('');
+              MemoTasks.Lines.Add('Task ID: ' + taskId);
+              MemoTasks.Lines.Add('Статус: PROCESSING');
+              MemoTasks.Lines.Add('Операция: ' + sellOrReturn);
+              MemoTasks.Lines.Add('Количество марок: ' + IntToStr(markingCodes.Count));
+              
+              Inc(totalTasks);
+            end;
+            
+            JSONValue.Free;
+          end;
+        except
+          on E: Exception do
+            MemoTasks.Lines.Add('Ошибка чтения файла ' + taskId + ': ' + E.Message);
+        end;
+      end;
+    end;
+    
+    // === СТАТИСТИКА ===
+    MemoTasks.Lines.Add('');
+    MemoTasks.Lines.Add('===================');
+    MemoTasks.Lines.Add('ВСЕГО ЗАДАНИЙ: ' + IntToStr(totalTasks));
+    MemoTasks.Lines.Add('Pending: ' + IntToStr(Length(pendingFiles)));
+    MemoTasks.Lines.Add('Processing: ' + IntToStr(Length(processingFiles)));
+    MemoTasks.Lines.Add('===================');
+    
+  except
+    on E: Exception do
+    begin
+      MemoTasks.Lines.Add('');
+      MemoTasks.Lines.Add('ОШИБКА ЗАГРУЗКИ ЗАДАНИЙ: ' + E.Message);
+    end;
+  end;
+end;
+
+// Получить следующее задание из очереди
+procedure TCheckMarksForm.ButtonGetNextTaskClick(Sender: TObject);
+var
+  pendingFiles: TArray<string>;
+  firstFile: string;
+  newFilePath: string;
+  taskId: string;
+  fileContent: string;
+  JSONValue: TJSONValue;
+  JSONObj: TJSONObject;
+  markingCodes: TJSONArray;
+  sellOrReturn: string;
+  i: Integer;
+begin
+  MemoCurrentTask.Clear;
+  EditCurrentIDOfTask.Text := '';
+  MemoAllMarksOfSession.Clear;
+  
+  try
+    // Проверяем наличие заданий в pending
+    if not TDirectory.Exists(TASKS_PATH_PENDING) then
+    begin
+      MemoCurrentTask.Lines.Add('Папка заданий не найдена');
+      Exit;
+    end;
+    
+    pendingFiles := TDirectory.GetFiles(TASKS_PATH_PENDING, '*.json');
+    
+    if Length(pendingFiles) = 0 then
+    begin
+      MemoCurrentTask.Lines.Add('Нет ожидающих заданий');
+      Exit;
+    end;
+    
+    // Берем первый файл
+    firstFile := pendingFiles[0];
+    taskId := TPath.GetFileNameWithoutExtension(firstFile);
+    
+    // Читаем содержимое
+    fileContent := TFile.ReadAllText(firstFile, TEncoding.UTF8);
+    JSONValue := TJSONObject.ParseJSONValue(fileContent);
+    
+    if not Assigned(JSONValue) or not (JSONValue is TJSONObject) then
+    begin
+      MemoCurrentTask.Lines.Add('Ошибка парсинга JSON задания');
+      Exit;
+    end;
+    
+    try
+      JSONObj := JSONValue as TJSONObject;
+      
+      // Извлекаем данные
+      if not JSONObj.TryGetValue<string>('sellOrReturn', sellOrReturn) then
+        sellOrReturn := 'sell';
+      
+      if not JSONObj.TryGetValue<TJSONArray>('markingCodes', markingCodes) then
+      begin
+        MemoCurrentTask.Lines.Add('Ошибка: нет маркировок в задании');
+        Exit;
+      end;
+      
+      // Переносим файл в processing
+      if not TDirectory.Exists(TASKS_PATH_PROCESSING) then
+        TDirectory.CreateDirectory(TASKS_PATH_PROCESSING);
+        
+      newFilePath := TASKS_PATH_PROCESSING + taskId + '.json';
+      TFile.Move(firstFile, newFilePath);
+      
+      // Отображаем информацию о задании
+      MemoCurrentTask.Lines.Add('=== ТЕКУЩЕЕ ЗАДАНИЕ ===');
+      MemoCurrentTask.Lines.Add('');
+      MemoCurrentTask.Lines.Add('Task ID: ' + taskId);
+      MemoCurrentTask.Lines.Add('Статус: PROCESSING');
+      MemoCurrentTask.Lines.Add('Операция: ' + sellOrReturn);
+      MemoCurrentTask.Lines.Add('Количество марок: ' + IntToStr(markingCodes.Count));
+      MemoCurrentTask.Lines.Add('');
+      MemoCurrentTask.Lines.Add('--- СПИСОК МАРОК ---');
+      
+      // Сохраняем ID задания
+      EditCurrentIDOfTask.Text := taskId;
+      
+      // Устанавливаем тип операции
+      if sellOrReturn = 'sell' then
+        EditSellOrReturn.Text := 'sell'
+      else if sellOrReturn = 'return' then
+        EditSellOrReturn.Text := 'return';
+      
+      // Отображаем все марки
+      MemoAllMarksOfSession.Clear;
+      for i := 0 to markingCodes.Count - 1 do
+      begin
+        MemoCurrentTask.Lines.Add(IntToStr(i + 1) + '. ' + markingCodes.Items[i].Value);
+        MemoAllMarksOfSession.Lines.Add(markingCodes.Items[i].Value);
+      end;
+      
+      MemoCurrentTask.Lines.Add('');
+      MemoCurrentTask.Lines.Add('======================');
+      MemoCurrentTask.Lines.Add('Задание готово к обработке');
+      
+    finally
+      JSONValue.Free;
+    end;
+    
+  except
+    on E: Exception do
+    begin
+      MemoCurrentTask.Lines.Add('ОШИБКА: ' + E.Message);
+    end;
+  end;
+end;
+
+// Сохранить результат выполнения задания
+procedure TCheckMarksForm.ButtonSaveResultTaskClick(Sender: TObject);
+var
+  taskId: string;
+  processingFilePath: string;
+  completedFilePath: string;
+  resultJSON: TJSONObject;
+  dataJSON: TJSONObject;
+  resultDataJSON: TJSONObject;
+  resultString: string;
+  success: Boolean;
+begin
+  taskId := Trim(EditCurrentIDOfTask.Text);
+  
+  if taskId = '' then
+  begin
+    ShowMessage('Не указан ID задания');
+    Exit;
+  end;
+  
+  try
+    processingFilePath := TASKS_PATH_PROCESSING + taskId + '.json';
+    
+    if not TFile.Exists(processingFilePath) then
+    begin
+      ShowMessage('Файл задания не найден в папке processing');
+      Exit;
+    end;
+    
+    // Определяем успешность на основе кода результата
+    success := (EditCodeResultOfTask.Text = '0') or (EditCodeResultOfTask.Text = '');
+    
+    // Формируем JSON результата
+    resultJSON := TJSONObject.Create;
+    try
+      resultJSON.AddPair('success', TJSONBool.Create(success));
+      
+      // Создаем объект data
+      dataJSON := TJSONObject.Create;
+      dataJSON.AddPair('status', 'completed');
+      
+      // Создаем объект result с детальной информацией
+      resultDataJSON := TJSONObject.Create;
+      resultDataJSON.AddPair('success', TJSONBool.Create(success));
+      resultDataJSON.AddPair('resultCode', EditCodeResultOfTask.Text);
+      resultDataJSON.AddPair('resultDescription', EditDescrResultOfTask.Text);
+      
+      // Добавляем JSON ответ от ККТ, если он есть
+      if MemoResultJSONTask.Lines.Count > 0 then
+        resultDataJSON.AddPair('kktResponse', MemoResultJSONTask.Text);
+      
+      dataJSON.AddPair('result', resultDataJSON);
+      resultJSON.AddPair('data', dataJSON);
+      
+      resultString := resultJSON.ToString;
+      
+      // Создаем папку completed, если её нет
+      if not TDirectory.Exists(TASKS_PATH_COMPLETED) then
+        TDirectory.CreateDirectory(TASKS_PATH_COMPLETED);
+      
+      // Сохраняем результат в файл
+      completedFilePath := TASKS_PATH_COMPLETED + taskId + '.json';
+      TFile.WriteAllText(completedFilePath, resultString, TEncoding.UTF8);
+      
+      // Удаляем файл из processing
+      TFile.Delete(processingFilePath);
+      
+      // Очищаем поля
+      EditCurrentIDOfTask.Text := '';
+      MemoCurrentTask.Clear;
+      MemoAllMarksOfSession.Clear;
+      MemoResultJSONTask.Clear;
+      EditCodeResultOfTask.Text := '';
+      EditDescrResultOfTask.Text := '';
+      
+      MemoCurrentTask.Lines.Add('======================');
+      MemoCurrentTask.Lines.Add('Результат сохранен!');
+      MemoCurrentTask.Lines.Add('Task ID: ' + taskId);
+      MemoCurrentTask.Lines.Add('Файл: ' + completedFilePath);
+      MemoCurrentTask.Lines.Add('======================');
+      
+    finally
+      resultJSON.Free;
+    end;
+    
+  except
+    on E: Exception do
+    begin
+      ShowMessage('Ошибка сохранения результата: ' + E.Message);
+    end;
+  end;
 end;
 
 procedure TCheckMarksForm.CreateDriverKKTButtonClick(Sender: TObject);

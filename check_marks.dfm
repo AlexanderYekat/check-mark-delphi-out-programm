@@ -150,6 +150,7 @@ object CheckMarksForm: TCheckMarksForm
     Height = 25
     Caption = 'ButtonGetTasks'
     TabOrder = 9
+    OnClick = ButtonGetTasksClick
   end
   object MemoTasks: TMemo
     Left = 127

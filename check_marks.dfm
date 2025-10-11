@@ -68,6 +68,13 @@ object CheckMarksForm: TCheckMarksForm
     Height = 15
     Caption = #1056#1077#1079#1091#1083#1100#1090#1072#1090' '#1087#1088#1086#1074#1077#1088#1082#1080' '#1084#1072#1088#1082#1080
   end
+  object LabelLastCommand: TLabel
+    Left = 752
+    Top = 8
+    Width = 106
+    Height = 15
+    Caption = 'LabelLastCommand'
+  end
   object MemoMarks: TMemo
     Left = 64
     Top = 75
@@ -147,6 +154,7 @@ object CheckMarksForm: TCheckMarksForm
     Height = 32
     Caption = 'ButtonCheckPermitMark'
     TabOrder = 9
+    OnClick = ButtonCheckPermitMarkClick
   end
   object EditCodeResultCheckPermit: TEdit
     Left = 608
@@ -220,6 +228,7 @@ object CheckMarksForm: TCheckMarksForm
     Height = 25
     Caption = 'ButtonDestroyDriver'
     TabOrder = 18
+    OnClick = ButtonDestroyDiverKKTClick
   end
   object CheckBoxEmulationKKT: TCheckBox
     Left = 568
@@ -423,5 +432,17 @@ object CheckMarksForm: TCheckMarksForm
     Caption = 'ButtonReceiptClosing'
     TabOrder = 39
     OnClick = ButtonReceiptClosingClick
+  end
+  object TimerForCommandsFrom1c: TTimer
+    OnTimer = TimerForCommandsFrom1cTimer
+    Left = 424
+    Top = 104
+  end
+  object TimerCheckMarks: TTimer
+    Enabled = False
+    Interval = 3000
+    OnTimer = TimerCheckMarksTimer
+    Left = 336
+    Top = 16
   end
 end

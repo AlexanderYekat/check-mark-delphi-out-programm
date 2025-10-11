@@ -4,7 +4,8 @@ interface
 
 uses
   Winapi.Windows, Winapi.Messages, System.SysUtils, System.Variants, System.Classes, Vcl.Graphics,
-  Vcl.Controls, Vcl.Forms, Vcl.Dialogs, Vcl.StdCtrls, ComObj, System.JSON, System.IOUtils, System.NetEncoding;
+  Vcl.Controls, Vcl.Forms, Vcl.Dialogs, Vcl.StdCtrls, ComObj, System.JSON, System.IOUtils, System.NetEncoding,
+  Vcl.ExtCtrls;
 
 const
   DRIVER_NOT_INIT = 'не инициализирован';
@@ -29,6 +30,12 @@ const
   PLANNED_STATUS_OF_PIECE_FOR_SALE = 'штучный товар, в стадии реализации';
   PLANNED_STATUS_OF_DRY_SOLD = 'мерный товар, реализован';
   PLANNED_STATUS_OF_UNCHANGED = 'статус товара не изменился';
+
+  COMMANDS_FROM_1C_PROCCES_NEW = 'new';
+  COMMANDS_FROM_1C_PROCCES_RECEIPT = 'process';
+  COMMANDS_FROM_1C_CANCEL_RECEIPT = 'cancel';
+  COMMANDS_FROM_1C_CLOSING_RECEIPT = 'closing';
+  COMMANDS_FROM_1C_CLOSED_RECEIPT = 'closed';
 
 type
   // Структура входных данных о марке
@@ -114,13 +121,15 @@ type
     ButtonRecieptWasClosed: TButton;
     ButtonCancelRecipt: TButton;
     ButtonReceiptClosing: TButton;
+    TimerForCommandsFrom1c: TTimer;
+    TimerCheckMarks: TTimer;
+    LabelLastCommand: TLabel;
     procedure ButtonGetMarksForCheckClick(Sender: TObject);
     procedure CreateDriverKKTButtonClick(Sender: TObject);
     procedure ButtonConnectToKKTClick(Sender: TObject);
     procedure ButtonCheckStatusKKTClick(Sender: TObject);
     procedure ButtonOpenShiftIfNeedClick(Sender: TObject);
     procedure CheckMarkOnKKTButtonClick(Sender: TObject);
-    procedure ButtonDisconnectFromKKTClick(Sender: TObject);
     procedure ButtonDissconnectFromKKTClick(Sender: TObject);
     procedure FormCreate(Sender: TObject);
     procedure ButtonGetNextMarkClick(Sender: TObject);
@@ -129,6 +138,11 @@ type
     procedure ButtonRecieptWasClosedClick(Sender: TObject);
     procedure ButtonCancelReciptClick(Sender: TObject);
     procedure ButtonReceiptClosingClick(Sender: TObject);
+    procedure TimerForCommandsFrom1cTimer(Sender: TObject);
+    procedure ButtonReceiptProcessClick(Sender: TObject);
+    procedure TimerCheckMarksTimer(Sender: TObject);
+    procedure ButtonCheckPermitMarkClick(Sender: TObject);
+    procedure ButtonDestroyDiverKKTClick(Sender: TObject);
   private
     { Private declarations }
     fptr: OLEVariant;
@@ -288,6 +302,99 @@ begin
   end;
 end;
 
+// Таймер для проверки команд от 1С через файловую систему
+procedure TCheckMarksForm.TimerCheckMarksTimer(Sender: TObject);
+begin
+ TimerCheckMarks.Enabled:=false;
+ if FClosingRecipt then exit;
+ ButtonReceiptProcessClick(self); //запускам процесс проверки марок, и далее с периодичностью несколько секунд
+end;
+
+procedure TCheckMarksForm.TimerForCommandsFrom1cTimer(Sender: TObject);
+var
+  CommandFiles: TArray<string>;
+  CommandFile: string;
+  CommandName: string;
+begin
+  try
+    // Проверяем существование папки команд
+    if not TDirectory.Exists(COMMAND_PATH) then
+    begin
+      TDirectory.CreateDirectory(COMMAND_PATH);
+      Exit;
+    end;
+    
+    // Получаем все файлы из папки команд
+    CommandFiles := TDirectory.GetFiles(COMMAND_PATH, '*.*');
+    
+    if Length(CommandFiles) = 0 then
+      Exit; // Нет команд
+    
+    // Обрабатываем каждый файл команды
+    for CommandFile in CommandFiles do
+    begin
+      // Извлекаем имя команды (без расширения и пути)
+      CommandName := TPath.GetFileNameWithoutExtension(CommandFile);
+      
+      LogMessage('Получена команда от 1С: ' + CommandName);
+
+      if CommandName = COMMANDS_FROM_1C_PROCCES_NEW then
+      begin
+        // Команда: отменить чек
+        LogMessage('→ Команда: НОВЫЙ ЧЕК');
+        ButtonCancelReciptClick(Self);
+      end
+      // Выполняем команду в зависимости от имени
+      else if CommandName = COMMANDS_FROM_1C_PROCCES_RECEIPT then
+      begin
+        // Команда: начать обработку чека
+        LogMessage('→ Команда: НАЧАТЬ ОБРАБОТКУ ЧЕКА');
+        ButtonReceiptProcessClick(Self);
+        //ButtonReceiptProcessClick(Self);
+      end
+      else if CommandName = COMMANDS_FROM_1C_CANCEL_RECEIPT then
+      begin
+        // Команда: отменить чек
+        LogMessage('→ Команда: ОТМЕНИТЬ ЧЕК');
+        ButtonCancelReciptClick(Self);
+      end
+      else if CommandName = COMMANDS_FROM_1C_CLOSING_RECEIPT then
+      begin
+        // Команда: чек закрывается
+        LogMessage('→ Команда: ЧЕК ЗАКРЫВАЕТСЯ');
+        ButtonReceiptClosingClick(Self);
+      end
+      else if CommandName = COMMANDS_FROM_1C_CLOSED_RECEIPT then
+      begin
+        // Команда: чек закрыт
+        LogMessage('→ Команда: ЧЕК ЗАКРЫТ');
+        ButtonRecieptWasClosedClick(Self);
+      end
+      else
+      begin
+        LogMessage('ПРЕДУПРЕЖДЕНИЕ: Неизвестная команда: ' + CommandName);
+      end;
+
+      LabelLastCommand.Caption:=CommandName;
+      
+      // УДАЛЯЕМ файл команды сразу после получения
+      try
+        TFile.Delete(CommandFile);
+        LogMessage('✓ Файл команды удален: ' + TPath.GetFileName(CommandFile));
+      except
+        on E: Exception do
+          LogMessage('ОШИБКА удаления файла команды: ' + E.Message);
+      end;
+    end;
+    
+  except
+    on E: Exception do
+    begin
+      LogMessage('ОШИБКА обработки команд: ' + E.Message);
+    end;
+  end;
+end;
+
 procedure TCheckMarksForm.ButtonGetMarksForCheckClick(Sender: TObject);
 begin
   LabelResultCommandCode.Caption:='0';
@@ -356,6 +463,8 @@ begin
   if not found then
   begin
     EditCurrentMark.Text := '';
+    EditCurrentMarkBase64.Text:='';
+    EditCurrentMarkCodeIdent.Text:='';
     LogMessage('✓ Все марки уже проверены!');
     LogMessage('  Всего марок: ' + IntToStr(Length(FInputMarks)));
     LogMessage('  Проверено: ' + IntToStr(Length(FCheckCache)));
@@ -412,6 +521,7 @@ procedure TCheckMarksForm.FormCreate(Sender: TObject);
 begin
  FClosingRecipt:=false;
  FLogMemo:=LogsMemo;
+ CreateDriverKKTButtonClick(self);
 end;
 
 // Добавление или обновление результата проверки в кэше
@@ -562,7 +672,9 @@ begin
 
       Exit;
     end;
-    
+
+    ButtonConnectToKKTClick(self);
+
     statusPlannedOfMark:=fptr.LIBFPTR_MES_PIECE_SOLD;
     if ComboBoxCheckType.ItemIndex = 1 then begin
       statusPlannedOfMark:=fptr.LIBFPTR_MES_PIECE_RETURN;
@@ -610,6 +722,8 @@ begin
       errorDescr:=fptr.errorDescription;
       ResultCodeCheckOnKKTEdit.Text:=IntToStr(ErrorCode);
       ResultDescrCheckOnKKTEdit.Text:=errorDescr;
+
+      ButtonDissconnectFromKKTClick(self);
       exit;
     end;
 
@@ -619,6 +733,8 @@ begin
       errorDescr:=fptr.errorDescription;
       ResultCodeCheckOnKKTEdit.Text:=IntToStr(ErrorCode);
       ResultDescrCheckOnKKTEdit.Text:=errorDescr;
+
+      ButtonDissconnectFromKKTClick(self);
       exit;
     end;
     validationResult := fptr.getParamInt(fptr.LIBFPTR_PARAM_MARKING_CODE_ONLINE_VALIDATION_RESULT);
@@ -628,6 +744,8 @@ begin
 
     ErrorCode := fptr.errorCode;
     errorDescr:=fptr.errorDescription;
+
+    ButtonDissconnectFromKKTClick(self);
 
     if CheckBoxEmulationKKT.Checked and (errorCode <> 0) then begin
       errorCode:=0;
@@ -787,26 +905,100 @@ begin
   end;
 end;
 
+// Команда: начать обработку чека
+procedure TCheckMarksForm.ButtonReceiptProcessClick(Sender: TObject);
+var
+ MarkForCheck:string;
+ WasCheckingAny:boolean;
+begin
+  WasCheckingAny:=false;
+  LogMessage('=== КОМАНДА: ЗАПУСК ЦИКЛА ПРОВЕРКИ МАРОК ===');
+  TimerCheckMarks.Enabled:=false; //отключаем таймер, пока полностью не завершим проверку марок по одному циклу
+
+  // Загружаем марки из CSV
+  MarkForCheck:='';
+  ButtonGetMarksForCheckClick(Self); //загружаем задания из 1с маркок для проверки
+
+  ButtonGetNextMarkClick(self); //получем первое задания для проверки
+  MarkForCheck:=EditCurrentMarkBase64.Text;
+  while MarkForCheck <> '' do begin
+    WasCheckingAny:=true;
+    CheckMarkOnKKTButtonClick(self); //запускаем провекру марки на ККТ
+    ButtonCheckPermitMarkClick(self); //запускаем проверку марок по РР
+
+    ButtonAddToTableClick(self); //запоминаем результаты проверки
+
+    ButtonGetNextMarkClick(self); //получем очередное задания для проверки
+    MarkForCheck:=EditCurrentMarkBase64.Text;
+
+    if FClosingRecipt then break; //выходим из цикла, если чек уже закрывается
+  end;
+
+  if WasCheckingAny then ButtonSaveResultsClick(self);
+
+  if not FClosingRecipt then //если мы не в процессе закрытия чеки, то продолжим цикл
+   TimerCheckMarks.Enabled:=true; //через сколько то секунду запускам очередной цикл провекри марок
+end;
+
 procedure TCheckMarksForm.ButtonReceiptClosingClick(Sender: TObject);
 begin
-  FClosingRecipt:=true; //не будем начианть новую проверку, так как чек закрывается, а срочно
+  LogMessage('=== КНОПКА: ЧЕК ЗАКРЫВАЕТСЯ ===');
+  FClosingRecipt:=true; //не будем начинать новую проверку, так как чек закрывается, а срочно
   //доделываем текущую проверку и отключаемся от ККТ
 end;
 
 procedure TCheckMarksForm.ButtonRecieptWasClosedClick(Sender: TObject);
 begin
- ClearAllData();
- MemoMarks.Clear;
- MemoResult.Clear;
- EditCurrentMarkBase64.Text:='';
- ClearCheckMarkResault;
+  LogMessage('=== КНОПКА: ЧЕК ЗАКРЫТ ===');
+  
+  // Полная очистка всех данных
+  ClearAllData();
+  MemoMarks.Clear;
+  MemoResult.Clear;
+  EditCurrentMarkBase64.Text:='';
+  EditCurrentMark.Text := '';
+  EditCurrentMarkCodeIdent.Text := '';
+  ClearCheckMarkResault;
+  
+  FClosingRecipt := False;
+
+  if FileExists(CSV_OUTPUT_RESULTS) then
+    try
+      TFile.Delete(CSV_OUTPUT_RESULTS);
+    except
+    end;
+  LogMessage('✓ Все данные очищены, готов к новому чеку');
 end;
 
 procedure TCheckMarksForm.ButtonCancelReciptClick(Sender: TObject);
 begin
-  fptr.cancelMarkingCodeValidation;
-  fptr.clearMarkingCodeValidationResult;
+  LogMessage('=== КНОПКА: ОТМЕНИТЬ ЧЕК ===');
+  TimerCheckMarks.Enabled:=false;
+  // Отменяем текущую проверку марки, если она идет
+  try
+    ButtonConnectToKKTClick(self);
+    fptr.cancelMarkingCodeValidation;
+    fptr.clearMarkingCodeValidationResult;
+    LogMessage('✓ Проверка марки отменена');
+  except
+    on E: Exception do
+      LogMessage('Ошибка отмены проверки: ' + E.Message);
+  end;
+  ButtonDissconnectFromKKTClick(self);
+
+  // Очищаем все данные
   ButtonRecieptWasClosedClick(self);
+end;
+
+procedure TCheckMarksForm.ButtonCheckPermitMarkClick(Sender: TObject);
+begin
+ //проверка марок по разрешительному режиму
+ EditCodeResultCheckPermit.Text:='0';
+ EditDescrResultPerimtCheck.Text:='OK - эмуляция';
+ EditUUID.Text:='UUID - эмуляция';
+ EditTimeStamp.Text:='TimeStamp - эмуляция';
+ EditInst.Text:='Inst - эмуляция';
+ EditVer.Text:='Ver - эмуляция';
 end;
 
 procedure TCheckMarksForm.ButtonCheckStatusKKTClick(Sender: TObject);
@@ -845,8 +1037,9 @@ begin
   if not(isOpened) then
     textOfConnection:=fptr.errorDescription;
   if CheckBoxEmulationKKT.Checked then
+    LabelConnectionWithKKT.Caption:=textOfConnection;
+  if isOpened then LogMessage('подключились к ККТ');
 
-  LabelConnectionWithKKT.Caption:=textOfConnection;
 end;
 
 procedure TCheckMarksForm.ButtonOpenShiftIfNeedClick(Sender: TObject);
@@ -877,10 +1070,11 @@ end;
 procedure TCheckMarksForm.ButtonDissconnectFromKKTClick(Sender: TObject);
 begin
   fptr.close;
+  LogMessage('отключились от ККТ');
   LabelConnectionWithKKT.Caption:='disconnected';
 end;
 
-procedure TCheckMarksForm.ButtonDisconnectFromKKTClick(Sender: TObject);
+procedure TCheckMarksForm.ButtonDestroyDiverKKTClick(Sender: TObject);
 begin
   fptr := Unassigned;
   LabelInitDriverKKT.Caption:='не инициализирован';

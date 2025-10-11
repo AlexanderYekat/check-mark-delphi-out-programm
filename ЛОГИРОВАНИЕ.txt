@@ -1,0 +1,94 @@
+═══════════════════════════════════════════════════════════
+  СИСТЕМА ЛОГИРОВАНИЯ В check_marks.pas
+═══════════════════════════════════════════════════════════
+
+✅ ИЗМЕНЕНИЯ:
+--------------
+Все вызовы ShowMessage() заменены на LogMessage()
+
+
+📝 КАК ИСПОЛЬЗОВАТЬ:
+--------------------
+
+1️⃣ Установите FLogMemo в нужный TMemo компонент
+
+   Вариант 1: В конструкторе формы (FormCreate):
+   
+   procedure TCheckMarksForm.FormCreate(Sender: TObject);
+   begin
+     FLogMemo := MemoTasks;  // или любой другой TMemo
+   end;
+
+
+   Вариант 2: При создании формы:
+   
+   CheckMarksForm := TCheckMarksForm.Create(Application);
+   CheckMarksForm.FLogMemo := CheckMarksForm.MemoTasks;
+
+
+   Вариант 3: Добавьте публичное свойство:
+   
+   В секции public:
+     property LogMemo: TMemo read FLogMemo write FLogMemo;
+   
+   Использование:
+     CheckMarksForm.LogMemo := MemoTasks;
+
+
+2️⃣ Теперь все сообщения будут логироваться в выбранный TMemo
+
+
+📊 ФОРМАТ ЛОГОВ:
+----------------
+[hh:nn:ss] Сообщение
+
+Примеры:
+[14:23:45] Данные загружены! Марок: 10, Тип чека: sell
+[14:23:50] ОШИБКА: Файл с марками не найден
+[14:24:10] Результаты сохранены! Файл: c:\share\output_results.csv
+
+
+🔍 ТИПЫ СООБЩЕНИЙ:
+-------------------
+✓ Обычные сообщения - информация о процессе
+✓ ОШИБКА - критические ошибки (начинаются с "ОШИБКА:")
+
+
+⚙️ ДОПОЛНИТЕЛЬНО:
+------------------
+В DEBUG режиме сообщения также выводятся в OutputDebugString
+для просмотра в Event Log или DebugView
+
+
+🔧 РЕКОМЕНДУЕМАЯ НАСТРОЙКА:
+----------------------------
+Создайте отдельный TMemo для логов или используйте MemoTasks.
+
+Пример настройки в DFM:
+  object MemoLog: TMemo
+    Align = alBottom
+    Height = 150
+    ReadOnly = True
+    ScrollBars = ssVertical
+    TabOrder = 0
+  end
+
+В коде:
+  FLogMemo := MemoLog;
+
+
+💡 СОВЕТ:
+---------
+Добавьте кнопку "Очистить лог":
+
+procedure TCheckMarksForm.ButtonClearLogClick(Sender: TObject);
+begin
+  if Assigned(FLogMemo) then
+    FLogMemo.Clear;
+end;
+
+
+═══════════════════════════════════════════════════════════
+  Версия: 1.0 | Дата: 2025-01-10
+═══════════════════════════════════════════════════════════
+

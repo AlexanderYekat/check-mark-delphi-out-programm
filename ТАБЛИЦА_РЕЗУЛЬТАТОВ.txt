@@ -1,0 +1,136 @@
+═══════════════════════════════════════════════════════════
+  MemoResult: Таблица результатов в формате CSV
+═══════════════════════════════════════════════════════════
+
+📋 НАЗНАЧЕНИЕ:
+--------------
+MemoResult отображает результаты проверки марок
+ТОЧНО в том же формате, что и output_results.csv
+
+БЕЗ адаптаций для пользователя!
+БЕЗ украшений!
+ТОЛЬКО CSV формат!
+
+
+📊 ФОРМАТ ОТОБРАЖЕНИЯ:
+-----------------------
+
+Строка 1 (заголовок):
+Position;MarkCode;KKTCheckCode;KKTCheckDescription;ValidationResult;PermitCheckCode;PermitCheckDescription;UUID;TimeStamp;Inst;Ver
+
+Строка 2+ (данные):
+1;MDE0NDk0NTUw...;0;OK;15;0;;;;;;;
+2;MDE3NTA4NDMw...;0;OK;15;0;;;;;;;
+3;MDE3NTA4NDMw...;5;Ошибка;10;0;;;;;;;
+
+
+🔄 ЛОГИКА ОБНОВЛЕНИЯ:
+----------------------
+
+1️⃣ При загрузке марок (ButtonGetMarksForCheck):
+   MemoResult.Clear;
+   MemoResult.Lines.Add('Position;MarkCode;...');  ← Заголовок
+
+2️⃣ При добавлении результата (ButtonAddToTable):
+   MemoResult.Clear;                               ← Очищаем
+   MemoResult.Lines.Add('Position;MarkCode;...');  ← Заголовок
+   
+   for i := 0 to High(FCheckCache) do             ← Весь кэш
+     MemoResult.Lines.Add(MarkResultToStr(...));
+
+
+✅ ПРЕИМУЩЕСТВА:
+-----------------
+
+✅ ВСЕГДА актуальные данные
+   • При обновлении в кэше → обновляется и в MemoResult
+
+✅ НЕТ дубликатов
+   • Таблица полностью перезаполняется из кэша
+
+✅ ТОЧНОЕ соответствие CSV
+   • Что видишь в MemoResult = что будет в файле
+   • Можно скопировать и вставить в Excel
+
+✅ Легко отлаживать
+   • Видно все результаты сразу
+   • Формат понятен
+
+
+📝 ПРИМЕР СОДЕРЖИМОГО:
+-----------------------
+
+Position;MarkCode;KKTCheckCode;KKTCheckDescription;ValidationResult;PermitCheckCode;PermitCheckDescription;UUID;TimeStamp;Inst;Ver
+1;MDE0NDk0NTUwNDM1MzA2ODIxUVhZWFNBTEdMTVlRURw5MUVFMDYcOTJZV0NYYm1LNlNOOHZ2d294WkZrN1dBWThXb0pOTUdHcjZDZ3RpdWphMDRjPQ==;0;OK;15;0;;;;;;;
+2;MDE3NTA4NDMwMDQzMDAyMjE1MnlXYlEcOTMwSHcrOTJ...;0;OK;15;0;;;12345678-1234;2025-01-10T14:30:00;INST001;1.0
+
+
+🔍 КАК ЧИТАТЬ:
+---------------
+
+Позиция 1:
+  Position: 1
+  MarkCode: MDE0NDk0... (Base64)
+  KKTCheckCode: 0 (успех)
+  KKTCheckDescription: OK
+  ValidationResult: 15 (валидна)
+  PermitCheckCode: 0
+  UUID: (пусто)
+
+Позиция 2:
+  Position: 2
+  MarkCode: MDE3NTA4... (Base64)
+  KKTCheckCode: 0 (успех)
+  KKTCheckDescription: OK
+  ValidationResult: 15 (валидна)
+  PermitCheckCode: 0
+  UUID: 12345678-1234 (есть данные разреш. режима!)
+
+
+💾 СОХРАНЕНИЕ В CSV:
+---------------------
+
+При нажатии ButtonSaveResults:
+  • FCheckCache → output_results.csv
+  • Формат ТОЧНО такой же, как в MemoResult
+  • Можно сравнить файл и MemoResult - будут идентичны
+
+
+🎯 ИСПОЛЬЗОВАНИЕ:
+------------------
+
+1. Проверяйте марки
+2. Смотрите результаты в MemoResult
+3. Все в формате CSV - без украшений
+4. Сохраняете - получаете тот же формат в файле
+
+
+📋 ФУНКЦИЯ MarkResultToStr():
+------------------------------
+
+Преобразует TMarkResult в строку CSV:
+
+```pascal
+Format('%d;%s;%d;%s;%d;%d;%s;%s;%s;%s;%s', [
+  R.Position,
+  R.MarkCodeBase64,      ← Base64!
+  R.KKTCheckCode,
+  R.KKTCheckDescription,
+  R.ValidationResult,
+  R.PermitCheckCode,
+  R.PermitCheckDescription,
+  R.UUID,
+  R.TimeStamp,
+  R.Inst,
+  R.Ver
+]);
+```
+
+Никаких адаптаций! Чистый CSV!
+
+
+═══════════════════════════════════════════════════════════
+  MemoResult = Точная копия CSV файла
+  Версия: 2.0 | Дата: 2025-01-10
+═══════════════════════════════════════════════════════════
+

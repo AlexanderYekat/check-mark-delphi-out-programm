@@ -4,7 +4,7 @@ interface
 
 uses
   Winapi.Windows, Winapi.Messages, System.SysUtils, System.Variants, System.Classes, Vcl.Graphics,
-  Vcl.Controls, Vcl.Forms, Vcl.Dialogs, Vcl.StdCtrls, ComObj, System.JSON, System.IOUtils;
+  Vcl.Controls, Vcl.Forms, Vcl.Dialogs, Vcl.StdCtrls, ComObj, System.JSON, System.IOUtils, System.NetEncoding;
 
 const
   DRIVER_NOT_INIT = 'не инициализирован';
@@ -16,10 +16,11 @@ const
   TYPE_OF_CHECK_SELL = 'sell';
   TYPE_OF_CHECK_RETURN = 'return';
   
-  // Пути к папкам заданий
-  TASKS_PATH_PENDING = 'c:\share\tasks\pending\';
-  TASKS_PATH_PROCESSING = 'c:\share\tasks\processing\';
-  TASKS_PATH_COMPLETED = 'c:\share\tasks\completed\';
+  // Пути к CSV файлам
+  CSV_INPUT_MARKS = 'c:\share\checkmarks\input_marks.csv';        // Входной файл с марками от 1С
+  CSV_INPUT_PARAMS = 'c:\share\checkmarks\input_params.csv';      // Параметры чека (кассир, тип, таймзона)
+  CSV_OUTPUT_RESULTS = 'c:\share\checkmarks\output_results.csv';  // Выходной файл с результатами для 1С
+  COMMAND_PATH = 'c:\share\checkmarks\commands\';
 
   PLANNED_STATUS_OF_MARK_PIECE_SOLD = 'штучный товар, реализован';
   PLANNED_STATUS_OF_MARK_DRY_FOR_SALE = 'мерный товар, в стадии реализации';
@@ -30,50 +31,56 @@ const
   PLANNED_STATUS_OF_UNCHANGED = 'статус товара не изменился';
 
 type
-  // Структура для хранения результата проверки марки
-  TMarkCheckResult = record
+  // Структура входных данных о марке
+  TInputMark = record
+    Position: Integer;
     MarkCode: string;
-    CheckTime: TDateTime;
-    Success: Boolean;
-    ResultCode: Integer;
-    ResultDescription: string;
-    JSONResponse: string;
+    MarkCodeBase64: string;
+    MarkCodeKI: string;
+    PlannedStatus: string;
+  end;
+  
+  // Структура параметров чека
+  TCheckParams = record
+    CheckType: string;      // sell / return
+    CashierName: string;
+    TimeZone: Integer;
+  end;
+  
+  // Структура результата проверки марки
+  TMarkResult = record
+    Position: Integer;
+    MarkCodeBase64: string;
+    CheckTime: TDateTime;   // Время проверки для кэша
+    // Результаты проверки на ККТ
+    KKTCheckCode: Integer;
+    KKTCheckDescription: string;
+    ValidationResult:integer;
+    // Результаты проверки по разрешительному режиму (если будет)
+    PermitCheckCode: Integer;
+    PermitCheckDescription: string;
+    UUID: string;
+    TimeStamp: string;
+    Inst: string;
+    Ver: string;
   end;
 
   TCheckMarksForm = class(TForm)
     MemoMarks: TMemo;
     EditSellOrReturn: TEdit;
     ButtonCheckMarksOnKKT: TButton;
-    MemoJSONResultCheckOnKKT: TMemo;
     ResultCodeCheckOnKKTEdit: TEdit;
     ResultDescrCheckOnKKTEdit: TEdit;
     CreateDriverKKTButton: TButton;
     CheckMarkOnKKTButton: TButton;
-    EditMark: TEdit;
-    ButtonGetTasks: TButton;
-    MemoTasks: TMemo;
-    MemoCurrentTask: TMemo;
+    EditCurrentMarkBase64: TEdit;
     ButtonCheckStatusKKT: TButton;
-    MemoResultJSONTask: TMemo;
-    EditCodeResultOfTask: TEdit;
-    EditDescrResultOfTask: TEdit;
-    ButtonSaveResultTask: TButton;
-    EditSeesionOfTasks: TEdit;
-    MemoAllMarksOfSession: TMemo;
     ButtonCheckPermitMark: TButton;
     EditCodeResultCheckPermit: TEdit;
     EditDescrResultPerimtCheck: TEdit;
-    MemoJSONResultCheckPermit: TMemo;
     ButtonCheckPermitMarks: TButton;
     ButtonCheckMark: TButton;
     ButtonCheckMArks: TButton;
-    ButtonFromResultCheckToResultOfTask: TButton;
-    EditCurrentIDOfTask: TEdit;
-    LabelCurrentIdOfTask: TLabel;
-    ButtonRemoveTask: TButton;
-    ButtonGetNextTask: TButton;
-    ButtonCreateNewSession: TButton;
-    ButtonFinishSession: TButton;
     ButtonOpenShiftIfNeed: TButton;
     ButtonDissconnectFromKKT: TButton;
     ButtonConnectToKKT: TButton;
@@ -90,30 +97,63 @@ type
     ComboBoxPlannedStatusOfMark: TComboBox;
     ComboBoxCheckType: TComboBox;
     ComboBoxTimeZone: TComboBox;
+    LogsMemo: TMemo;
+    ButtonGetMarksForCheck: TButton;
+    LabelCaptionResultCheckOfMark: TLabel;
+    MemoResult: TMemo;
+    ButtonAddToTable: TButton;
+    ButtonSaveResults: TButton;
+    EditValidationResult: TEdit;
+    ButtonGetNextMark: TButton;
+    EditUUID: TEdit;
+    EditTimeStamp: TEdit;
+    EditInst: TEdit;
+    EditVer: TEdit;
+    EditCurrentMark: TEdit;
+    EditCurrentMarkCodeIdent: TEdit;
+    ButtonRecieptWasClosed: TButton;
+    ButtonCancelRecipt: TButton;
+    ButtonReceiptClosing: TButton;
+    procedure ButtonGetMarksForCheckClick(Sender: TObject);
     procedure CreateDriverKKTButtonClick(Sender: TObject);
-    procedure ButtonDestroyDriverClick(Sender: TObject);
     procedure ButtonConnectToKKTClick(Sender: TObject);
-    procedure ButtonDissconnectFromKKTClick(Sender: TObject);
     procedure ButtonCheckStatusKKTClick(Sender: TObject);
     procedure ButtonOpenShiftIfNeedClick(Sender: TObject);
     procedure CheckMarkOnKKTButtonClick(Sender: TObject);
-    procedure ButtonGetTasksClick(Sender: TObject);
-    procedure ButtonGetNextTaskClick(Sender: TObject);
-    procedure ButtonSaveResultTaskClick(Sender: TObject);
-    procedure ButtonCreateNewSessionClick(Sender: TObject);
-    procedure ButtonFinishSessionClick(Sender: TObject);
+    procedure ButtonDisconnectFromKKTClick(Sender: TObject);
+    procedure ButtonDissconnectFromKKTClick(Sender: TObject);
+    procedure FormCreate(Sender: TObject);
+    procedure ButtonGetNextMarkClick(Sender: TObject);
+    procedure ButtonAddToTableClick(Sender: TObject);
+    procedure ButtonSaveResultsClick(Sender: TObject);
+    procedure ButtonRecieptWasClosedClick(Sender: TObject);
+    procedure ButtonCancelReciptClick(Sender: TObject);
+    procedure ButtonReceiptClosingClick(Sender: TObject);
   private
     { Private declarations }
     fptr: OLEVariant;
-    FMarkCheckCache: TArray<TMarkCheckResult>; // Кэш результатов проверки марок
-    FSessionActive: Boolean; // Флаг активной сессии
-    function CreateJSONAcceptOrDeclineOrCancel(ActionType: string): string;
-    function RunProcessOnKKT(JSONRequest: string; var JSONResponse: string; var ErrorCode: Integer; var ErrorDescr: string): Boolean;
-    function FindMarkInCache(const MarkCode: string; out Result: TMarkCheckResult): Boolean;
-    procedure AddMarkToCache(const MarkResult: TMarkCheckResult);
-    procedure ClearMarkCache;
+    FInputMarks: TArray<TInputMark>;       // Загруженные марки из CSV
+    FCheckParams: TCheckParams;             // Параметры чека
+    FCheckCache: TArray<TMarkResult>;       // Кэш проверенных марок (сохраняется в CSV)
+    FLogMemo: TMemo;                        // Memo для логирования (устанавливается позже)
+    FClosingRecipt:boolean;
+    procedure ClearCheckMarkResault;
+    function MarkInputToStr(InputMark: TInputMark):string;
+    function MarkResultToStr(R: TMarkResult):string;
+    function LoadInputMarksFromCSV: Boolean;
+    function LoadCheckParamsFromCSV: Boolean;
+    function SaveResultsToCSV: Boolean;
+    procedure ClearAllData;
+    procedure LogMessage(const Msg: string);
+    function FindMarkInCache(const MarkCodeBase64: string; out CachedResult: TMarkResult): Boolean;
+    procedure AddMarkToCache(const MarkResult: TMarkResult);
+    function MarkExistsInInputArray(const MarkCodeBase64: string): Boolean;
+    procedure ProcessMarkCode(var Mark: TInputMark);
   public
     { Public declarations }
+    // Инициализация: установите FLogMemo в нужный TMemo компонент
+    // Например, в FormCreate или где угодно:
+    // FLogMemo := MemoTasks;  // или любой другой TMemo
   end;
 
 var
@@ -123,107 +163,355 @@ implementation
 
 {$R *.dfm}
 
-// === ФУНКЦИИ РАБОТЫ С КЭШЕМ МАРОК ===
+// === ФУНКЦИИ РАБОТЫ С CSV ФАЙЛАМИ ===
 
-// Поиск марки в кэше
-function TCheckMarksForm.FindMarkInCache(const MarkCode: string; out Result: TMarkCheckResult): Boolean;
+// Загрузка марок из входного CSV файла
+function TCheckMarksForm.LoadInputMarksFromCSV: Boolean;
+var
+  Lines: TStringList;
+  i: Integer;
+  Fields: TArray<string>;
+  Mark: TInputMark;
+begin
+  Result := False;
+  SetLength(FInputMarks, 0);
+  MemoMarks.Clear;
+  
+  if not FileExists(CSV_INPUT_MARKS) then
+  begin
+    LogMessage('ОШИБКА: Файл с марками не найден: ' + CSV_INPUT_MARKS);
+    Exit;
+  end;
+
+  Lines := TStringList.Create;
+  try
+    Lines.LoadFromFile(CSV_INPUT_MARKS, TEncoding.UTF8);
+
+    // Пропускаем заголовок (первую строку)
+    for i := 1 to Lines.Count - 1 do
+    begin
+      if Trim(Lines[i]) = '' then Continue;
+
+      Fields := Lines[i].Split([';']);
+      if Length(Fields) < 3 then Continue;
+
+      Mark.Position := StrToIntDef(Trim(Fields[0]), 0);
+      Mark.MarkCodeBase64 := Trim(Fields[1]);
+      Mark.PlannedStatus := Trim(Fields[2]);
+      
+      // Обрабатываем код марки: декодируем и извлекаем КИ
+      ProcessMarkCode(Mark);
+
+      // Проверяем, нет ли уже такой марки в массиве
+      if MarkExistsInInputArray(Mark.MarkCodeBase64) then
+      begin
+        LogMessage('ПРЕДУПРЕЖДЕНИЕ: Марка уже есть в списке, пропускаем дубликат. Позиция: ' + IntToStr(Mark.Position));
+        Continue;
+      end;
+
+      MemoMarks.Lines.Add(MarkInputToStr(Mark));
+
+      SetLength(FInputMarks, Length(FInputMarks) + 1);
+      FInputMarks[High(FInputMarks)] := Mark;
+      //LogMessage(MarkInputToStr(Mark));
+    end;
+
+    Result := Length(FInputMarks) > 0;
+  finally
+    Lines.Free;
+  end;
+end;
+
+// Загрузка параметров чека из CSV файла
+function TCheckMarksForm.LoadCheckParamsFromCSV: Boolean;
+var
+  Lines: TStringList;
+  Fields: TArray<string>;
+begin
+  Result := False;
+  
+  if not FileExists(CSV_INPUT_PARAMS) then
+  begin
+    LogMessage('ОШИБКА: Файл с параметрами не найден: ' + CSV_INPUT_PARAMS);
+    Exit;
+  end;
+  
+  Lines := TStringList.Create;
+  try
+    Lines.LoadFromFile(CSV_INPUT_PARAMS, TEncoding.UTF8);
+    
+    if Lines.Count < 2 then Exit;
+    
+    // Вторая строка - данные (первая - заголовок)
+    Fields := Lines[1].Split([';']);
+    if Length(Fields) < 3 then Exit;
+    
+    FCheckParams.CheckType := Trim(Fields[0]);
+    FCheckParams.CashierName := Trim(Fields[1]);
+    FCheckParams.TimeZone := StrToIntDef(Trim(Fields[2]), 6);
+    
+    Result := True;
+  finally
+    Lines.Free;
+  end;
+end;
+
+// Сохранение результатов в выходной CSV файл
+function TCheckMarksForm.SaveResultsToCSV: Boolean;
+var
+  Lines: TStringList;
+  i: Integer;
+  R: TMarkResult;
+begin
+  Result := False;
+  
+  Lines := TStringList.Create;
+  try
+    // Заголовок
+    Lines.Add('Position;MarkCode;KKTCheckCode;KKTCheckDescription;' +
+              'ValidationResult;' +
+              'PermitCheckCode;PermitCheckDescription;UUID;TimeStamp;Inst;Ver');
+    
+    // Данные из кэша проверок
+    for i := 0 to High(FCheckCache) do
+    begin
+      R := FCheckCache[i];
+      Lines.Add(MarkResultToStr(R));
+    end;
+    
+    Lines.SaveToFile(CSV_OUTPUT_RESULTS, TEncoding.UTF8);
+    Result := True;
+    
+    LogMessage('Сохранено результатов: ' + IntToStr(Length(FCheckCache)));
+  finally
+    Lines.Free;
+  end;
+end;
+
+procedure TCheckMarksForm.ButtonGetMarksForCheckClick(Sender: TObject);
+begin
+  LabelResultCommandCode.Caption:='0';
+  LabelResultCommandDescr.Caption:=RESULT_COMMAND_OK;
+  if not(LoadInputMarksFromCSV()) then begin
+    LabelResultCommandCode.Caption := '100';
+    LabelResultCommandDescr.Caption:='Ошибка загрузки марок для проверки';
+  end;
+end;
+
+// Получить следующую непроверенную марку
+procedure TCheckMarksForm.ButtonGetNextMarkClick(Sender: TObject);
+var
+  i: Integer;
+  cachedResult: TMarkResult;
+  found: Boolean;
+begin
+
+  ClearCheckMarkResault();
+  found := False;
+  
+  // Проверяем, загружены ли марки
+  if Length(FInputMarks) = 0 then
+  begin
+    LogMessage('Нет загруженных марок. Сначала загрузите данные.');
+    Exit;
+  end;
+  
+  // Ищем первую непроверенную марку
+  for i := 0 to High(FInputMarks) do
+  begin
+    // Проверяем, есть ли марка в кэше (по MarkCodeBase64)
+    if not FindMarkInCache(FInputMarks[i].MarkCodeBase64, cachedResult) then
+    begin
+      // Нашли непроверенную марку!
+      
+      // Заполняем все три поля с кодами марки
+      EditCurrentMarkBase64.Text := FInputMarks[i].MarkCodeBase64;
+      EditCurrentMark.Text := FInputMarks[i].MarkCode;
+      EditCurrentMarkCodeIdent.Text := FInputMarks[i].MarkCodeKI;
+      
+      // Устанавливаем планируемый статус в ComboBox
+      ComboBoxPlannedStatusOfMark.ItemIndex := ComboBoxPlannedStatusOfMark.Items.IndexOf(FInputMarks[i].PlannedStatus);
+      
+      // Если статус не найден в списке, логируем предупреждение
+      if ComboBoxPlannedStatusOfMark.ItemIndex = -1 then
+      begin
+        LogMessage('ПРЕДУПРЕЖДЕНИЕ: Статус "' + FInputMarks[i].PlannedStatus + '" не найден в ComboBox');
+        ComboBoxPlannedStatusOfMark.ItemIndex := 0; // Устанавливаем первый элемент по умолчанию
+      end;
+
+      LogMessage('Найдена непроверенная марка:');
+      LogMessage('  Позиция: ' + IntToStr(FInputMarks[i].Position));
+      LogMessage('  Base64: ' + FInputMarks[i].MarkCodeBase64);
+      LogMessage('  Код: ' + FInputMarks[i].MarkCode);
+      LogMessage('  КИ: ' + FInputMarks[i].MarkCodeKI);
+      LogMessage('  Статус: ' + FInputMarks[i].PlannedStatus);
+      LogMessage('  Осталось проверить: ' + IntToStr(Length(FInputMarks) - Length(FCheckCache)));
+      
+      found := True;
+      Exit;
+    end;
+  end;
+  
+  // Если все марки уже проверены
+  if not found then
+  begin
+    EditCurrentMark.Text := '';
+    LogMessage('✓ Все марки уже проверены!');
+    LogMessage('  Всего марок: ' + IntToStr(Length(FInputMarks)));
+    LogMessage('  Проверено: ' + IntToStr(Length(FCheckCache)));
+  end;
+end;
+
+procedure TCheckMarksForm.ClearCheckMarkResault;
+begin
+  ResultCodeCheckOnKKTEdit.Text:='';
+  ResultDescrCheckOnKKTEdit.Text:='';
+  EditValidationResult.Text:='';
+  EditCodeResultCheckPermit.Text:='';
+  EditDescrResultPerimtCheck.Text:='';
+  EditUUID.Text:='';
+  EditTimeStamp.Text:='';
+  EditInst.Text:='';
+  EditVer.Text:='';
+end;
+
+procedure TCheckMarksForm.ClearAllData;
+begin
+  SetLength(FInputMarks, 0);
+  SetLength(FCheckCache, 0);
+  FCheckParams.CheckType := '';
+  FCheckParams.CashierName := '';
+  FCheckParams.TimeZone := 6;
+  LogMessage('Все данные очищены, кэш сброшен');
+end;
+
+// === КОНЕЦ ФУНКЦИЙ РАБОТЫ С CSV ===
+
+// === ФУНКЦИИ РАБОТЫ С КЭШЕМ ПРОВЕРОК ===
+
+// Поиск марки в кэше проверок
+function TCheckMarksForm.FindMarkInCache(const MarkCodeBase64: string; out CachedResult: TMarkResult): Boolean;
 var
   i: Integer;
 begin
-  Result := Default(TMarkCheckResult);
-  for i := 0 to High(FMarkCheckCache) do
+  Result := False;
+  CachedResult := Default(TMarkResult);
+  
+  for i := 0 to High(FCheckCache) do
   begin
-    if FMarkCheckCache[i].MarkCode = MarkCode then
+    if FCheckCache[i].MarkCodeBase64 = MarkCodeBase64 then
     begin
-      Result := FMarkCheckCache[i];
-      Exit(True);
+      CachedResult := FCheckCache[i];
+      Result := True;
+      Exit;
     end;
   end;
-  Exit(False);
 end;
 
-// Добавление результата проверки марки в кэш
-procedure TCheckMarksForm.AddMarkToCache(const MarkResult: TMarkCheckResult);
+procedure TCheckMarksForm.FormCreate(Sender: TObject);
 begin
-  SetLength(FMarkCheckCache, Length(FMarkCheckCache) + 1);
-  FMarkCheckCache[High(FMarkCheckCache)] := MarkResult;
+ FClosingRecipt:=false;
+ FLogMemo:=LogsMemo;
 end;
 
-// Очистка кэша марок
-procedure TCheckMarksForm.ClearMarkCache;
+// Добавление или обновление результата проверки в кэше
+procedure TCheckMarksForm.AddMarkToCache(const MarkResult: TMarkResult);
+var
+  i: Integer;
+  Found: Boolean;
 begin
-  SetLength(FMarkCheckCache, 0);
-  FSessionActive := False;
+  Found := False;
+  
+  // Ищем, есть ли уже такая марка в кэше
+  for i := 0 to High(FCheckCache) do
+  begin
+    if FCheckCache[i].MarkCodeBase64 = MarkResult.MarkCodeBase64 then
+    begin
+      // Марка найдена - ОБНОВЛЯЕМ результат
+      FCheckCache[i] := MarkResult;
+      Found := True;
+      LogMessage('Результат обновлен в кэше для марки на позиции ' + IntToStr(MarkResult.Position));
+      Exit;
+    end;
+  end;
+  
+  // Марка не найдена - ДОБАВЛЯЕМ новую запись
+  if not Found then
+  begin
+    SetLength(FCheckCache, Length(FCheckCache) + 1);
+    FCheckCache[High(FCheckCache)] := MarkResult;
+    LogMessage('Результат добавлен в кэш для марки на позиции ' + IntToStr(MarkResult.Position));
+  end;
+end;
+
+// Проверка существования марки в массиве загруженных марок
+function TCheckMarksForm.MarkExistsInInputArray(const MarkCodeBase64: string): Boolean;
+var
+  i: Integer;
+begin
+  Result := False;
+  for i := 0 to High(FInputMarks) do
+  begin
+    if FInputMarks[i].MarkCodeBase64 = MarkCodeBase64 then
+    begin
+      Result := True;
+      Exit;
+    end;
+  end;
+end;
+
+// Обработка кода марки: декодирование Base64 и извлечение КИ
+procedure TCheckMarksForm.ProcessMarkCode(var Mark: TInputMark);
+var
+  DecodedBytes: TBytes;
+  SeparatorPos: Integer;
+  Encoding: TEncoding;
+begin
+  // MarkCodeBase64 уже заполнен из CSV
+  
+  try
+    // ДЕКОДИРУЕМ ИЗ BASE64
+    DecodedBytes := TNetEncoding.Base64.DecodeStringToBytes(Mark.MarkCodeBase64);
+    
+    // Преобразуем байты в строку
+    Encoding := TEncoding.UTF8;
+    Mark.MarkCode := Encoding.GetString(DecodedBytes);
+    
+    // Извлекаем MarkCodeKI - все символы до #29
+    SeparatorPos := Pos(#29, Mark.MarkCode);
+    if SeparatorPos > 0 then
+      Mark.MarkCodeKI := Copy(Mark.MarkCode, 1, SeparatorPos - 1)
+    else
+      Mark.MarkCodeKI := Mark.MarkCode; // Если нет разделителя, берем всю строку
+      
+  except
+    on E: Exception do
+    begin
+      LogMessage('ОШИБКА декодирования Base64 марки: ' + E.Message);
+      // Если не удалось декодировать, оставляем как есть
+      Mark.MarkCode := Mark.MarkCodeBase64;
+      Mark.MarkCodeKI := Mark.MarkCodeBase64;
+    end;
+  end;
 end;
 
 // === КОНЕЦ ФУНКЦИЙ РАБОТЫ С КЭШЕМ ===
 
-// Выполнение команды на ККТ через JSON (аналог функции 1С ВыполнитьЗаданиеJSON)
-function TCheckMarksForm.RunProcessOnKKT(JSONRequest: string; var JSONResponse: string; var ErrorCode: Integer; var ErrorDescr: string): Boolean;
-var
-  ResultValidate: Integer;
-  ResultProcess: Integer;
-  timeZoneInt:integer;
+// Процедура логирования сообщений
+procedure TCheckMarksForm.LogMessage(const Msg: string);
 begin
-  Result := False;
-  ErrorCode := 0;
-  ErrorDescr := '';
-  JSONResponse := '';
+  // TODO: Установить FLogMemo := нужный TMemo компонент
+  // Например: FLogMemo := MemoTasks;
 
-  timeZoneInt:=ComboBoxTimeZone.ItemIndex + 1;
-
-  try
-    // Проверяем корректность JSON (аналог validateJson в 1С)
-    //fptr.setParam(fptr.LIBFPTR_PARAM_JSON_DATA, JSONRequest);
-    //ResultValidate := fptr.validateJson;
-
-    //if ResultValidate <> 0 then
-    //begin
-    //  ErrorCode := fptr.errorCode;
-    //  ErrorDescr := fptr.errorDescription;
-    //  Exit;
-    //end;
-
-    // Устанавливаем временную зону (как в 1С)
-    fptr.setSingleSetting(fptr.LIBFPTR_SETTING_TIME_ZONE, timeZoneInt);
-    fptr.applySingleSettings;
-
-    // Выполняем JSON команду на ККТ (аналог processJson в 1С)
-    fptr.setParam(fptr.LIBFPTR_PARAM_JSON_DATA, JSONRequest);
-    ResultProcess := fptr.processJson;
-
-    if (ResultProcess <> 0) then
-    begin
-      ErrorCode := fptr.errorCode;
-      ErrorDescr := fptr.errorDescription;
-      LabelResultCommandDescr.Caption:=ErrorDescr;
-      if not(CheckBoxEmulationKKT.Checked) then Exit;
-    end;
-
-    LabelResultCommandDescr.Caption:=ErrorDescr;
-    // Получаем JSON ответ от драйвера
-    JSONResponse := fptr.getParamString(fptr.LIBFPTR_PARAM_JSON_DATA);
-    // Режим эмуляции - возвращаем тестовый ответ в формате реального ответа от ККТ
-    if CheckBoxEmulationKKT.Checked then begin
-      JSONResponse := '{"itemInfoCheckResult": {' +
-                      '"ecrStandAloneFlag": false,' +
-                      '"imcCheckFlag": true,' +
-                      '"imcCheckResult": true,' +
-                      '"imcEstimatedStatusCorrect": true,' +
-                      '"imcStatusInfo": true' +
-                      '}}';
-    end;
-    ErrorCode:=0;
-    ErrorDescr := RESULT_COMMAND_OK;
-    Result := True;
-  except
-    on E: Exception do
-    begin
-      ErrorDescr := 'Исключение при выполнении команды: ' + E.Message;
-      ErrorCode := -1;
-      Result := False;
-    end;
+  if Assigned(FLogMemo) then
+  begin
+    FLogMemo.Lines.Add('[' + FormatDateTime('hh:nn:ss', Now) + '] ' + Msg);
   end;
+
+  // Также выводим в консоль для отладки
+  {$IFDEF DEBUG}
+  OutputDebugString(PChar(Msg));
+  {$ENDIF}
 end;
 
 procedure TCheckMarksForm.CheckMarkOnKKTButtonClick(Sender: TObject);
@@ -237,32 +525,41 @@ var
     errorDescr: string;
     actionType: string;
     success: Boolean;
-    cachedResult: TMarkCheckResult;
-    markResult: TMarkCheckResult;
+    cachedResult: TMarkResult;
+    markResult: TMarkResult;
 begin
     // Очищаем результаты предыдущей проверки
-    MemoJSONResultCheckOnKKT.Clear;
     ResultCodeCheckOnKKTEdit.Text := '0';
     ResultDescrCheckOnKKTEdit.Text := RESULT_COMMAND_OK;
+
+    mark := EditCurrentMark.Text;
     
-    mark:=StringReplace(EditMark.Text, '\u001d', #29, [rfReplaceAll, rfIgnoreCase]);
-    
-    // ПРОВЕРЯЕМ КЭШ - если марка уже проверялась, берем результат из кэша
-    if FSessionActive and FindMarkInCache(mark, cachedResult) then
+    // ПРОВЕРЯЕМ КЭШ - если марка уже проверялась, берем результат из кэша (по Base64)
+    if FindMarkInCache(EditCurrentMarkBase64.Text, cachedResult) then
     begin
-      MemoJSONResultCheckOnKKT.Lines.Add('=== РЕЗУЛЬТАТ ИЗ КЭША ===');
-      MemoJSONResultCheckOnKKT.Lines.Add('Марка уже проверялась ранее');
-      MemoJSONResultCheckOnKKT.Lines.Add('Время проверки: ' + DateTimeToStr(cachedResult.CheckTime));
-      MemoJSONResultCheckOnKKT.Lines.Add('');
-      MemoJSONResultCheckOnKKT.Lines.Add(cachedResult.JSONResponse);
-      ResultCodeCheckOnKKTEdit.Text := IntToStr(cachedResult.ResultCode);
-      ResultDescrCheckOnKKTEdit.Text := cachedResult.ResultDescription;
+      LogMessage('=== РЕЗУЛЬТАТ ИЗ КЭША ===');
+      LogMessage('Марка уже проверялась ранее');
+      LogMessage('Время проверки: ' + DateTimeToStr(cachedResult.CheckTime));
+      LogMessage('');
+      LogMessage('Код результата: ' + IntToStr(cachedResult.KKTCheckCode));
+      LogMessage('Описание: ' + cachedResult.KKTCheckDescription);
+      ResultCodeCheckOnKKTEdit.Text := IntToStr(cachedResult.KKTCheckCode);
+      ResultDescrCheckOnKKTEdit.Text := cachedResult.KKTCheckDescription;
+      EditValidationResult.Text := IntToStr(cachedResult.ValidationResult);
       
-      if cachedResult.Success then
-        MemoJSONResultCheckOnKKT.Lines.Add('✓ Команда выполнена успешно (из кэша)')
+      // Заполняем поля разрешительного режима из кэша
+      EditCodeResultCheckPermit.Text := IntToStr(cachedResult.PermitCheckCode);
+      EditDescrResultPerimtCheck.Text := cachedResult.PermitCheckDescription;
+      EditUUID.Text := cachedResult.UUID;
+      EditTimeStamp.Text := cachedResult.TimeStamp;
+      EditInst.Text := cachedResult.Inst;
+      EditVer.Text := cachedResult.Ver;
+      
+      if (cachedResult.KKTCheckCode = 0) and (cachedResult.ValidationResult = 15) then
+        LogMessage('✓ Марка валидна (из кэша)')
       else
-        MemoJSONResultCheckOnKKT.Lines.Add('✗ Ошибка выполнения команды (из кэша)');
-        
+        LogMessage('✗ Марка невалидна (из кэша)');
+
       Exit;
     end;
     
@@ -294,9 +591,7 @@ begin
     // Выполнение данного потока останавливается до тех пор, пока не будет выполнена проверка КМ!
     ErrorCode := fptr.errorCode;
     if ErrorCode = 401 then begin //процедура проверки марки уже была запущена
-      actionType := 'cancelMarkingCodeValidation';
-      jsonOut := CreateJSONAcceptOrDeclineOrCancel(actionType);
-      success := RunProcessOnKKT(jsonOut, jsonAnswer, errorCode, errorDescr);
+      fptr.cancelMarkingCodeValidation;
 
       fptr.setParam(fptr.LIBFPTR_PARAM_MARKING_CODE_TYPE, fptr.LIBFPTR_MCT12_AUTO);
       fptr.setParam(fptr.LIBFPTR_PARAM_MARKING_CODE, mark);
@@ -326,582 +621,27 @@ begin
       ResultDescrCheckOnKKTEdit.Text:=errorDescr;
       exit;
     end;
-    //validationResult := fptr.getParamInt(fptr.LIBFPTR_PARAM_MARKING_CODE_ONLINE_VALIDATION_RESULT);
-    //fptr.getParamInt(fptr.LIBFPTR_PARAM_MARKING_CODE_ONLINE_VALIDATION_RESULT);
+    validationResult := fptr.getParamInt(fptr.LIBFPTR_PARAM_MARKING_CODE_ONLINE_VALIDATION_RESULT);
 
-    // Определяем тип действия: принять или отклонить марку
-    // validationResult = 1 - марка валидна, принимаем
-    // validationResult <> 1 - марка невалидна, отклоняем
-    //if validationResult = 1 then
     actionType := 'acceptMarkingCode';
-    //else
-    //  actionType := 'declineMarkingCode';
-    
-    // Формируем JSON запрос
-    jsonOut := CreateJSONAcceptOrDeclineOrCancel(actionType);
-    //MemoJSONResultCheckOnKKT.Lines.Add('JSON запрос: ' + jsonOut);
+    fptr.acceptMarkingCode;
 
-    // Выполняем команду на ККТ через JSON
-    success := RunProcessOnKKT(jsonOut, jsonAnswer, errorCode, errorDescr);
+    ErrorCode := fptr.errorCode;
+    errorDescr:=fptr.errorDescription;
 
-    // Отображаем результаты
-    //MemoJSONResultCheckOnKKT.Lines.Add('JSON ответ: ' + jsonAnswer);
-    MemoJSONResultCheckOnKKT.Lines.Add(jsonAnswer);
+    if CheckBoxEmulationKKT.Checked and (errorCode <> 0) then begin
+      errorCode:=0;
+      validationResult:=15;
+    end;
+
     ResultCodeCheckOnKKTEdit.Text := IntToStr(errorCode);
     ResultDescrCheckOnKKTEdit.Text := errorDescr;
-    
-    // Парсим и отображаем детали ответа
-    //ParseAndDisplayJSONResponse(jsonAnswer);
+    EditValidationResult.Text:=IntToStr(validationResult);
 
-    if success then
-      MemoJSONResultCheckOnKKT.Lines.Add('Команда выполнена успешно')
+    if (errorCode = 0) or not (CheckBoxEmulationKKT.Checked) then
+      LogMessage('Проверка марки выполнена успешно')
     else
-      MemoJSONResultCheckOnKKT.Lines.Add('Ошибка выполнения команды');
-    
-    // СОХРАНЯЕМ РЕЗУЛЬТАТ В КЭШ
-    if FSessionActive then
-    begin
-      markResult.MarkCode := mark;
-      markResult.CheckTime := Now;
-      markResult.Success := success;
-      markResult.ResultCode := errorCode;
-      markResult.ResultDescription := errorDescr;
-      markResult.JSONResponse := jsonAnswer;
-      AddMarkToCache(markResult);
-      
-      MemoJSONResultCheckOnKKT.Lines.Add('');
-      MemoJSONResultCheckOnKKT.Lines.Add('✓ Результат сохранен в кэш');
-      MemoJSONResultCheckOnKKT.Lines.Add('Размер кэша: ' + IntToStr(Length(FMarkCheckCache)) + ' марок');
-    end;
-end;
-
-// Загрузка заданий из файловой системы
-procedure TCheckMarksForm.ButtonGetTasksClick(Sender: TObject);
-var
-  pendingFiles: TArray<string>;
-  processingFiles: TArray<string>;
-  completedFiles: TArray<string>;
-  filePath: string;
-  fileContent: string;
-  JSONValue: TJSONValue;
-  JSONObj: TJSONObject;
-  JSONArray: TJSONArray;
-  markingCodes: TJSONArray;
-  sellOrReturn: string;
-  taskId: string;
-  i: Integer;
-  totalTasks: Integer;
-begin
-  MemoTasks.Clear;
-  MemoTasks.Lines.Add('=== ЗАГРУЗКА ЗАДАНИЙ ===');
-  MemoTasks.Lines.Add('');
-  
-  totalTasks := 0;
-  
-  try
-    // Создаем папки, если их нет
-    if not TDirectory.Exists(TASKS_PATH_PENDING) then
-      TDirectory.CreateDirectory(TASKS_PATH_PENDING);
-    if not TDirectory.Exists(TASKS_PATH_PROCESSING) then
-      TDirectory.CreateDirectory(TASKS_PATH_PROCESSING);
-    if not TDirectory.Exists(TASKS_PATH_COMPLETED) then
-      TDirectory.CreateDirectory(TASKS_PATH_COMPLETED);
-    
-    // === ЗАГРУЖАЕМ ЗАДАНИЯ ИЗ PENDING ===
-    MemoTasks.Lines.Add('--- ОЖИДАЮЩИЕ ЗАДАНИЯ (PENDING) ---');
-    pendingFiles := TDirectory.GetFiles(TASKS_PATH_PENDING, '*.json');
-    
-    if Length(pendingFiles) = 0 then
-      MemoTasks.Lines.Add('Нет ожидающих заданий')
-    else
-    begin
-      for filePath in pendingFiles do
-      begin
-        taskId := TPath.GetFileNameWithoutExtension(filePath);
-        
-        try
-          fileContent := TFile.ReadAllText(filePath, TEncoding.UTF8);
-          JSONValue := TJSONObject.ParseJSONValue(fileContent);
-          
-          if Assigned(JSONValue) and (JSONValue is TJSONObject) then
-          begin
-            JSONObj := JSONValue as TJSONObject;
-            
-            // Извлекаем sellOrReturn
-            if JSONObj.TryGetValue<string>('sellOrReturn', sellOrReturn) then
-            else
-              sellOrReturn := 'sell';
-            
-            // Извлекаем массив маркировок
-            if JSONObj.TryGetValue<TJSONArray>('markingCodes', markingCodes) then
-            begin
-              MemoTasks.Lines.Add('');
-              MemoTasks.Lines.Add('Task ID: ' + taskId);
-              MemoTasks.Lines.Add('Статус: PENDING');
-              MemoTasks.Lines.Add('Операция: ' + sellOrReturn);
-              MemoTasks.Lines.Add('Количество марок: ' + IntToStr(markingCodes.Count));
-              
-              // Показываем первые 3 марки
-              for i := 0 to Min(2, markingCodes.Count - 1) do
-              begin
-                MemoTasks.Lines.Add('  Марка ' + IntToStr(i + 1) + ': ' + markingCodes.Items[i].Value);
-              end;
-              
-              if markingCodes.Count > 3 then
-                MemoTasks.Lines.Add('  ... и ещё ' + IntToStr(markingCodes.Count - 3) + ' марок');
-              
-              Inc(totalTasks);
-            end;
-            
-            JSONValue.Free;
-          end;
-        except
-          on E: Exception do
-            MemoTasks.Lines.Add('Ошибка чтения файла ' + taskId + ': ' + E.Message);
-        end;
-      end;
-    end;
-    
-    // === ЗАГРУЖАЕМ ЗАДАНИЯ ИЗ PROCESSING ===
-    MemoTasks.Lines.Add('');
-    MemoTasks.Lines.Add('--- ЗАДАНИЯ В ОБРАБОТКЕ (PROCESSING) ---');
-    processingFiles := TDirectory.GetFiles(TASKS_PATH_PROCESSING, '*.json');
-    
-    if Length(processingFiles) = 0 then
-      MemoTasks.Lines.Add('Нет заданий в обработке')
-    else
-    begin
-      for filePath in processingFiles do
-      begin
-        taskId := TPath.GetFileNameWithoutExtension(filePath);
-        
-        try
-          fileContent := TFile.ReadAllText(filePath, TEncoding.UTF8);
-          JSONValue := TJSONObject.ParseJSONValue(fileContent);
-          
-          if Assigned(JSONValue) and (JSONValue is TJSONObject) then
-          begin
-            JSONObj := JSONValue as TJSONObject;
-            
-            if JSONObj.TryGetValue<string>('sellOrReturn', sellOrReturn) then
-            else
-              sellOrReturn := 'sell';
-            
-            if JSONObj.TryGetValue<TJSONArray>('markingCodes', markingCodes) then
-            begin
-              MemoTasks.Lines.Add('');
-              MemoTasks.Lines.Add('Task ID: ' + taskId);
-              MemoTasks.Lines.Add('Статус: PROCESSING');
-              MemoTasks.Lines.Add('Операция: ' + sellOrReturn);
-              MemoTasks.Lines.Add('Количество марок: ' + IntToStr(markingCodes.Count));
-              
-              Inc(totalTasks);
-            end;
-            
-            JSONValue.Free;
-          end;
-        except
-          on E: Exception do
-            MemoTasks.Lines.Add('Ошибка чтения файла ' + taskId + ': ' + E.Message);
-        end;
-      end;
-    end;
-    
-    // === СТАТИСТИКА ===
-    MemoTasks.Lines.Add('');
-    MemoTasks.Lines.Add('===================');
-    MemoTasks.Lines.Add('ВСЕГО ЗАДАНИЙ: ' + IntToStr(totalTasks));
-    MemoTasks.Lines.Add('Pending: ' + IntToStr(Length(pendingFiles)));
-    MemoTasks.Lines.Add('Processing: ' + IntToStr(Length(processingFiles)));
-    MemoTasks.Lines.Add('===================');
-    
-  except
-    on E: Exception do
-    begin
-      MemoTasks.Lines.Add('');
-      MemoTasks.Lines.Add('ОШИБКА ЗАГРУЗКИ ЗАДАНИЙ: ' + E.Message);
-    end;
-  end;
-end;
-
-// Создать новую сессию - скопировать все задания из PENDING в PROCESSING
-procedure TCheckMarksForm.ButtonCreateNewSessionClick(Sender: TObject);
-var
-  pendingFiles: TArray<string>;
-  completedFiles: TArray<string>;
-  filePath: string;
-  newFilePath: string;
-  taskId: string;
-  copiedCount: Integer;
-begin
-  try
-    // Проверяем, что COMPLETED пуста
-    if TDirectory.Exists(TASKS_PATH_COMPLETED) then
-    begin
-      completedFiles := TDirectory.GetFiles(TASKS_PATH_COMPLETED, '*.json');
-      if Length(completedFiles) > 0 then
-      begin
-        ShowMessage('Сессия не может быть начата!' + #13#10 + 
-                    'В папке COMPLETED осталось ' + IntToStr(Length(completedFiles)) + ' файлов.' + #13#10 +
-                    'Клиент 1С должен сначала забрать результаты.');
-        Exit;
-      end;
-    end;
-    
-    // Проверяем, что PROCESSING пуста
-    if TDirectory.Exists(TASKS_PATH_PROCESSING) then
-    begin
-      if Length(TDirectory.GetFiles(TASKS_PATH_PROCESSING, '*.json')) > 0 then
-      begin
-        ShowMessage('В папке PROCESSING уже есть задания!' + #13#10 + 
-                    'Завершите текущую сессию перед началом новой.');
-        Exit;
-      end;
-    end;
-    
-    // Создаем папки, если их нет
-    if not TDirectory.Exists(TASKS_PATH_PENDING) then
-      TDirectory.CreateDirectory(TASKS_PATH_PENDING);
-    if not TDirectory.Exists(TASKS_PATH_PROCESSING) then
-      TDirectory.CreateDirectory(TASKS_PATH_PROCESSING);
-    
-    // Копируем все файлы из PENDING в PROCESSING
-    pendingFiles := TDirectory.GetFiles(TASKS_PATH_PENDING, '*.json');
-    
-    if Length(pendingFiles) = 0 then
-    begin
-      ShowMessage('Нет заданий в папке PENDING');
-      Exit;
-    end;
-    
-    copiedCount := 0;
-    for filePath in pendingFiles do
-    begin
-      taskId := TPath.GetFileNameWithoutExtension(filePath);
-      newFilePath := TASKS_PATH_PROCESSING + taskId + '.json';
-      TFile.Copy(filePath, newFilePath, True);
-      Inc(copiedCount);
-    end;
-    
-    // Очищаем кэш и устанавливаем флаг активной сессии
-    ClearMarkCache;
-    FSessionActive := True;
-    
-    MemoTasks.Clear;
-    MemoTasks.Lines.Add('=== НОВАЯ СЕССИЯ СОЗДАНА ===');
-    MemoTasks.Lines.Add('');
-    MemoTasks.Lines.Add('Скопировано заданий: ' + IntToStr(copiedCount));
-    MemoTasks.Lines.Add('Из: ' + TASKS_PATH_PENDING);
-    MemoTasks.Lines.Add('В: ' + TASKS_PATH_PROCESSING);
-    MemoTasks.Lines.Add('');
-    MemoTasks.Lines.Add('Статус сессии: АКТИВНА');
-    MemoTasks.Lines.Add('Кэш марок: ОЧИЩЕН');
-    MemoTasks.Lines.Add('=========================');
-    
-    ShowMessage('Сессия начата!' + #13#10 + 'Заданий к обработке: ' + IntToStr(copiedCount));
-    
-  except
-    on E: Exception do
-    begin
-      ShowMessage('Ошибка создания сессии: ' + E.Message);
-    end;
-  end;
-end;
-
-// Получить следующее задание из очереди PROCESSING
-procedure TCheckMarksForm.ButtonGetNextTaskClick(Sender: TObject);
-var
-  processingFiles: TArray<string>;
-  firstFile: string;
-  taskId: string;
-  fileContent: string;
-  JSONValue: TJSONValue;
-  JSONObj: TJSONObject;
-  markingCodes: TJSONArray;
-  sellOrReturn: string;
-  i: Integer;
-begin
-  MemoCurrentTask.Clear;
-  EditCurrentIDOfTask.Text := '';
-  MemoAllMarksOfSession.Clear;
-  
-  try
-    // Проверяем наличие заданий в processing
-    if not TDirectory.Exists(TASKS_PATH_PROCESSING) then
-    begin
-      MemoCurrentTask.Lines.Add('Папка PROCESSING не найдена');
-      Exit;
-    end;
-    
-    processingFiles := TDirectory.GetFiles(TASKS_PATH_PROCESSING, '*.json');
-    
-    if Length(processingFiles) = 0 then
-    begin
-      MemoCurrentTask.Lines.Add('Нет заданий в PROCESSING');
-      MemoCurrentTask.Lines.Add('Создайте новую сессию (кнопка "Создать новую сессию")');
-      Exit;
-    end;
-    
-    // Берем первый файл
-    firstFile := processingFiles[0];
-    taskId := TPath.GetFileNameWithoutExtension(firstFile);
-    
-    // Читаем содержимое
-    fileContent := TFile.ReadAllText(firstFile, TEncoding.UTF8);
-    JSONValue := TJSONObject.ParseJSONValue(fileContent);
-    
-    if not Assigned(JSONValue) or not (JSONValue is TJSONObject) then
-    begin
-      MemoCurrentTask.Lines.Add('Ошибка парсинга JSON задания');
-      Exit;
-    end;
-    
-    try
-      JSONObj := JSONValue as TJSONObject;
-      
-      // Извлекаем данные
-      if not JSONObj.TryGetValue<string>('sellOrReturn', sellOrReturn) then
-        sellOrReturn := 'sell';
-      
-      if not JSONObj.TryGetValue<TJSONArray>('markingCodes', markingCodes) then
-      begin
-        MemoCurrentTask.Lines.Add('Ошибка: нет маркировок в задании');
-        Exit;
-      end;
-      
-      // Отображаем информацию о задании
-      MemoCurrentTask.Lines.Add('=== ТЕКУЩЕЕ ЗАДАНИЕ ===');
-      MemoCurrentTask.Lines.Add('');
-      MemoCurrentTask.Lines.Add('Task ID: ' + taskId);
-      MemoCurrentTask.Lines.Add('Статус: PROCESSING');
-      MemoCurrentTask.Lines.Add('Операция: ' + sellOrReturn);
-      MemoCurrentTask.Lines.Add('Количество марок: ' + IntToStr(markingCodes.Count));
-      MemoCurrentTask.Lines.Add('');
-      MemoCurrentTask.Lines.Add('--- СПИСОК МАРОК ---');
-      
-      // Сохраняем ID задания
-      EditCurrentIDOfTask.Text := taskId;
-      
-      // Устанавливаем тип операции
-      if sellOrReturn = 'sell' then
-        EditSellOrReturn.Text := 'sell'
-      else if sellOrReturn = 'return' then
-        EditSellOrReturn.Text := 'return';
-      
-      // Отображаем все марки
-      MemoAllMarksOfSession.Clear;
-      for i := 0 to markingCodes.Count - 1 do
-      begin
-        MemoCurrentTask.Lines.Add(IntToStr(i + 1) + '. ' + markingCodes.Items[i].Value);
-        MemoAllMarksOfSession.Lines.Add(markingCodes.Items[i].Value);
-      end;
-      
-      MemoCurrentTask.Lines.Add('');
-      MemoCurrentTask.Lines.Add('======================');
-      MemoCurrentTask.Lines.Add('Задание готово к обработке');
-      
-    finally
-      JSONValue.Free;
-    end;
-    
-  except
-    on E: Exception do
-    begin
-      MemoCurrentTask.Lines.Add('ОШИБКА: ' + E.Message);
-    end;
-  end;
-end;
-
-// Сохранить результат выполнения задания
-procedure TCheckMarksForm.ButtonSaveResultTaskClick(Sender: TObject);
-var
-  taskId: string;
-  processingFilePath: string;
-  completedFilePath: string;
-  resultJSON: TJSONObject;
-  dataJSON: TJSONObject;
-  resultDataJSON: TJSONObject;
-  resultString: string;
-  success: Boolean;
-begin
-  taskId := Trim(EditCurrentIDOfTask.Text);
-  
-  if taskId = '' then
-  begin
-    ShowMessage('Не указан ID задания');
-    Exit;
-  end;
-  
-  try
-    processingFilePath := TASKS_PATH_PROCESSING + taskId + '.json';
-    
-    if not TFile.Exists(processingFilePath) then
-    begin
-      ShowMessage('Файл задания не найден в папке processing');
-      Exit;
-    end;
-    
-    // Определяем успешность на основе кода результата
-    success := (EditCodeResultOfTask.Text = '0') or (EditCodeResultOfTask.Text = '');
-    
-    // Формируем JSON результата
-    resultJSON := TJSONObject.Create;
-    try
-      resultJSON.AddPair('success', TJSONBool.Create(success));
-      
-      // Создаем объект data
-      dataJSON := TJSONObject.Create;
-      dataJSON.AddPair('status', 'completed');
-      
-      // Создаем объект result с детальной информацией
-      resultDataJSON := TJSONObject.Create;
-      resultDataJSON.AddPair('success', TJSONBool.Create(success));
-      resultDataJSON.AddPair('resultCode', EditCodeResultOfTask.Text);
-      resultDataJSON.AddPair('resultDescription', EditDescrResultOfTask.Text);
-      
-      // Добавляем JSON ответ от ККТ, если он есть
-      if MemoResultJSONTask.Lines.Count > 0 then
-        resultDataJSON.AddPair('kktResponse', MemoResultJSONTask.Text);
-      
-      dataJSON.AddPair('result', resultDataJSON);
-      resultJSON.AddPair('data', dataJSON);
-      
-      resultString := resultJSON.ToString;
-      
-      // Создаем папку completed, если её нет
-      if not TDirectory.Exists(TASKS_PATH_COMPLETED) then
-        TDirectory.CreateDirectory(TASKS_PATH_COMPLETED);
-      
-      // Сохраняем результат в файл
-      completedFilePath := TASKS_PATH_COMPLETED + taskId + '.json';
-      TFile.WriteAllText(completedFilePath, resultString, TEncoding.UTF8);
-      
-      // Удаляем файл из processing
-      TFile.Delete(processingFilePath);
-      
-      // Очищаем поля
-      EditCurrentIDOfTask.Text := '';
-      MemoCurrentTask.Clear;
-      MemoAllMarksOfSession.Clear;
-      MemoResultJSONTask.Clear;
-      EditCodeResultOfTask.Text := '';
-      EditDescrResultOfTask.Text := '';
-      
-      MemoCurrentTask.Lines.Add('======================');
-      MemoCurrentTask.Lines.Add('Результат сохранен!');
-      MemoCurrentTask.Lines.Add('Task ID: ' + taskId);
-      MemoCurrentTask.Lines.Add('Файл: ' + completedFilePath);
-      MemoCurrentTask.Lines.Add('======================');
-      
-    finally
-      resultJSON.Free;
-    end;
-    
-  except
-    on E: Exception do
-    begin
-      ShowMessage('Ошибка сохранения результата: ' + E.Message);
-    end;
-  end;
-end;
-
-// Завершить сессию - удалить файлы из PENDING и очистить память
-procedure TCheckMarksForm.ButtonFinishSessionClick(Sender: TObject);
-var
-  pendingFiles: TArray<string>;
-  processingFiles: TArray<string>;
-  filePath: string;
-  deletedPending: Integer;
-  remainingProcessing: Integer;
-  cacheSize: Integer;
-begin
-  try
-    deletedPending := 0;
-    remainingProcessing := 0;
-    cacheSize := Length(FMarkCheckCache);
-    
-    MemoTasks.Clear;
-    MemoTasks.Lines.Add('=== ЗАВЕРШЕНИЕ СЕССИИ ===');
-    MemoTasks.Lines.Add('');
-    
-    // Проверяем, остались ли задания в PROCESSING
-    if TDirectory.Exists(TASKS_PATH_PROCESSING) then
-    begin
-      processingFiles := TDirectory.GetFiles(TASKS_PATH_PROCESSING, '*.json');
-      remainingProcessing := Length(processingFiles);
-      
-      if remainingProcessing > 0 then
-      begin
-        MemoTasks.Lines.Add('ВНИМАНИЕ! В папке PROCESSING осталось ' + IntToStr(remainingProcessing) + ' заданий!');
-        MemoTasks.Lines.Add('Завершите все задания перед завершением сессии.');
-        MemoTasks.Lines.Add('');
-        
-        if MessageDlg('В PROCESSING осталось ' + IntToStr(remainingProcessing) + ' заданий.' + #13#10 +
-                      'Все равно завершить сессию?', mtWarning, [mbYes, mbNo], 0) <> mrYes then
-        begin
-          Exit;
-        end;
-        
-        // Удаляем оставшиеся файлы из PROCESSING
-        for filePath in processingFiles do
-          TFile.Delete(filePath);
-          
-        MemoTasks.Lines.Add('Удалено файлов из PROCESSING: ' + IntToStr(remainingProcessing));
-      end
-      else
-      begin
-        MemoTasks.Lines.Add('✓ Все задания из PROCESSING выполнены');
-      end;
-    end;
-    
-    // Удаляем все файлы из PENDING
-    if TDirectory.Exists(TASKS_PATH_PENDING) then
-    begin
-      pendingFiles := TDirectory.GetFiles(TASKS_PATH_PENDING, '*.json');
-      
-      for filePath in pendingFiles do
-      begin
-        TFile.Delete(filePath);
-        Inc(deletedPending);
-      end;
-      
-      if deletedPending > 0 then
-        MemoTasks.Lines.Add('Удалено файлов из PENDING: ' + IntToStr(deletedPending))
-      else
-        MemoTasks.Lines.Add('✓ Папка PENDING уже пуста');
-    end;
-    
-    MemoTasks.Lines.Add('');
-    MemoTasks.Lines.Add('--- ОЧИСТКА ПАМЯТИ ---');
-    MemoTasks.Lines.Add('Размер кэша марок до очистки: ' + IntToStr(cacheSize));
-    
-    // Очищаем кэш марок и завершаем сессию
-    ClearMarkCache;
-    
-    MemoTasks.Lines.Add('✓ Кэш марок очищен');
-    MemoTasks.Lines.Add('✓ Флаг сессии сброшен');
-    MemoTasks.Lines.Add('');
-    MemoTasks.Lines.Add('=== СЕССИЯ ЗАВЕРШЕНА ===');
-    MemoTasks.Lines.Add('');
-    MemoTasks.Lines.Add('Для начала новой сессии:');
-    MemoTasks.Lines.Add('1. Клиент 1С должен забрать результаты из COMPLETED');
-    MemoTasks.Lines.Add('2. Нажмите "Создать новую сессию"');
-    
-    // Очищаем поля текущего задания
-    EditCurrentIDOfTask.Text := '';
-    MemoCurrentTask.Clear;
-    MemoAllMarksOfSession.Clear;
-    
-    ShowMessage('Сессия завершена!' + #13#10 + 
-                'Удалено из PENDING: ' + IntToStr(deletedPending) + #13#10 +
-                'Кэш марок очищен');
-    
-  except
-    on E: Exception do
-    begin
-      ShowMessage('Ошибка завершения сессии: ' + E.Message);
-    end;
-  end;
+      LogMessage('Ошибка проверки марки');
 end;
 
 procedure TCheckMarksForm.CreateDriverKKTButtonClick(Sender: TObject);
@@ -920,6 +660,153 @@ begin
   end;
   version:=fptr.version;
   LabelInitDriverKKT.Caption:=version;
+end;
+
+procedure TCheckMarksForm.ButtonAddToTableClick(Sender: TObject);
+var
+  markResult: TMarkResult;
+  markBase64: string;
+  errorCode: Integer;
+  validationResult: Integer;
+  i: Integer;
+  foundPosition: Integer;
+begin
+  // Получаем данные из полей формы
+  //mark := StringReplace(EditCurrentMark.Text, '\u001d', #29, [rfReplaceAll, rfIgnoreCase]);
+  markBase64 := EditCurrentMarkBase64.Text;
+
+  if (ResultCodeCheckOnKKTEdit.Text = '') or (EditCodeResultCheckPermit.Text = '') then begin
+    LogMessage('ОШИБКА: Проверка марки ещё не производилась');
+    Exit;
+  end;
+
+  errorCode := StrToIntDef(ResultCodeCheckOnKKTEdit.Text, -1);
+  validationResult := StrToIntDef(EditValidationResult.Text, 0);
+
+  if markBase64 = '' then
+  begin
+    LogMessage('ОШИБКА: Не указана марка для добавления в таблицу');
+    Exit;
+  end;
+  
+  // Находим позицию марки в исходном массиве
+  foundPosition := 0;
+  for i := 0 to High(FInputMarks) do
+  begin
+    if FInputMarks[i].MarkCodeBase64 = markBase64 then
+    begin
+      foundPosition := FInputMarks[i].Position;
+      Break;
+    end;
+  end;
+  
+  // СОХРАНЯЕМ РЕЗУЛЬТАТ В КЭШ
+  markResult.Position := foundPosition;
+  markResult.MarkCodeBase64 := EditCurrentMarkBase64.Text;  // Сохраняем Base64 версию
+  markResult.CheckTime := Now;
+  markResult.KKTCheckCode := errorCode;
+  markResult.KKTCheckDescription := ResultDescrCheckOnKKTEdit.Text;
+  markResult.ValidationResult := validationResult;
+  markResult.PermitCheckCode := StrToIntDef(EditCodeResultCheckPermit.Text, 0);
+  markResult.PermitCheckDescription := EditDescrResultPerimtCheck.Text;
+  markResult.UUID := EditUUID.Text;
+  markResult.TimeStamp := EditTimeStamp.Text;
+  markResult.Inst := EditInst.Text;
+  markResult.Ver := EditVer.Text;
+
+  // Добавляем или обновляем результат в кэше
+  AddMarkToCache(markResult);
+
+  // Обновляем таблицу результатов - перезаполняем полностью
+  MemoResult.Clear;
+  MemoResult.Lines.Add('Position;MarkCode;KKTCheckCode;KKTCheckDescription;ValidationResult;PermitCheckCode;PermitCheckDescription;UUID;TimeStamp;Inst;Ver');
+  
+  // Добавляем все результаты из кэша
+  for i := 0 to High(FCheckCache) do
+  begin
+    MemoResult.Lines.Add(MarkResultToStr(FCheckCache[i]));
+  end;
+
+  LogMessage('Размер кэша: ' + IntToStr(Length(FCheckCache)) + ' марок');  
+end;
+
+function TCheckMarksForm.MarkResultToStr(R: TMarkResult):string;
+begin
+  Result:=Format('%d;%s;%d;%s;%d;%d;%s;%s;%s;%s;%s', [
+        R.Position,
+        R.MarkCodeBase64,
+        R.KKTCheckCode,
+        R.KKTCheckDescription,
+        R.ValidationResult,
+        R.PermitCheckCode,
+        R.PermitCheckDescription,
+        R.UUID,
+        R.TimeStamp,
+        R.Inst,
+        R.Ver
+      ]);
+end;
+
+// Сохранить результаты проверки в CSV файл
+procedure TCheckMarksForm.ButtonSaveResultsClick(Sender: TObject);
+begin
+  try
+    if Length(FCheckCache) = 0 then
+    begin
+      LogMessage('ОШИБКА: Нет проверенных марок для сохранения.');
+      Exit;
+    end;
+
+    LogMessage('=== СОХРАНЕНИЕ РЕЗУЛЬТАТОВ ===');
+    LogMessage('Всего марок: ' + IntToStr(Length(FInputMarks)));
+    LogMessage('Проверено марок: ' + IntToStr(Length(FCheckCache)));
+
+    // Проверяем, все ли марки проверены
+    if Length(FCheckCache) < Length(FInputMarks) then
+    begin
+      LogMessage('ПРЕДУПРЕЖДЕНИЕ: Проверены не все марки!');
+      LogMessage('Непроверено: ' + IntToStr(Length(FInputMarks) - Length(FCheckCache)));
+    end;
+
+    // Сохраняем результаты в CSV
+    if SaveResultsToCSV then
+    begin
+      LogMessage('✓ Результаты сохранены в файл: ' + CSV_OUTPUT_RESULTS);
+      LogMessage('✓ Файл готов для чтения 1С');
+    end
+    else
+    begin
+      LogMessage('ОШИБКА: Не удалось сохранить результаты');
+    end;
+
+  except
+    on E: Exception do
+    begin
+      LogMessage('ОШИБКА сохранения: ' + E.Message);
+    end;
+  end;
+end;
+
+procedure TCheckMarksForm.ButtonReceiptClosingClick(Sender: TObject);
+begin
+  FClosingRecipt:=true; //не будем начианть новую проверку, так как чек закрывается, а срочно
+  //доделываем текущую проверку и отключаемся от ККТ
+end;
+
+procedure TCheckMarksForm.ButtonRecieptWasClosedClick(Sender: TObject);
+begin
+ ClearAllData();
+ MemoMarks.Clear;
+ MemoResult.Clear;
+ EditCurrentMarkBase64.Text:='';
+ ClearCheckMarkResault;
+end;
+
+procedure TCheckMarksForm.ButtonCancelReciptClick(Sender: TObject);
+begin
+  fptr.cancelMarkingCodeValidation;
+  fptr.clearMarkingCodeValidationResult;
+  ButtonRecieptWasClosedClick(self);
 end;
 
 procedure TCheckMarksForm.ButtonCheckStatusKKTClick(Sender: TObject);
@@ -993,24 +880,18 @@ begin
   LabelConnectionWithKKT.Caption:='disconnected';
 end;
 
-procedure TCheckMarksForm.ButtonDestroyDriverClick(Sender: TObject);
+procedure TCheckMarksForm.ButtonDisconnectFromKKTClick(Sender: TObject);
 begin
   fptr := Unassigned;
   LabelInitDriverKKT.Caption:='не инициализирован';
 end;
 
-// Формирование JSON запроса для принятия/отклонения/отмены марки
-function TCheckMarksForm.CreateJSONAcceptOrDeclineOrCancel(ActionType: string): string;
-var
-  JSONObj: TJSONObject;
+function TCheckMarksForm.MarkInputToStr(InputMark: TInputMark):string;
+var s:string;
 begin
-  JSONObj := TJSONObject.Create;
-  try
-    JSONObj.AddPair('type', ActionType);
-    Result := JSONObj.ToString;
-  finally
-    JSONObj.Free;
-  end;
+   Result:=IntToStr(InputMark.Position);
+   Result:=Result+';'+InputMark.MarkCodeBase64;
+   Result:=Result+';'+InputMark.PlannedStatus;
 end;
 
 end.

@@ -216,7 +216,7 @@ object CheckMarksForm: TCheckMarksForm
     Top = 8
     Width = 69
     Height = 15
-    Caption = '2025.10.12.01'
+    Caption = '2025.10.12.02'
   end
   object MemoMarks: TMemo
     Left = 64

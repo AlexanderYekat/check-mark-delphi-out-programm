@@ -21,7 +21,9 @@ const
   CSV_INPUT_MARKS = 'c:\share\checkmarks\input_marks.csv';        // Входной файл с марками от 1С
   CSV_INPUT_PARAMS = 'c:\share\checkmarks\input_params.csv';      // Параметры чека (кассир, тип, таймзона)
   CSV_OUTPUT_RESULTS = 'c:\share\checkmarks\output_results.csv';  // Выходной файл с результатами для 1С
+  CSV_PROGRESS_INFO = 'c:\share\checkmarks\progress_info.csv';    // Файл с информацией о прогрессе проверки
   COMMAND_PATH = 'c:\share\checkmarks\commands\';
+  LOGS_PATH = 'c:\share\checkmarks\logs\';                        // Папка для файлов логов
 
   PLANNED_STATUS_OF_MARK_PIECE_SOLD = 'штучный товар, реализован';
   PLANNED_STATUS_OF_MARK_DRY_FOR_SALE = 'мерный товар, в стадии реализации';
@@ -170,6 +172,7 @@ type
     FCheckParams: TCheckParams;             // Параметры чека
     FCheckCache: TArray<TMarkResult>;       // Кэш проверенных марок (сохраняется в CSV)
     FLogMemo: TMemo;                        // Memo для логирования (устанавливается позже)
+    FLogFileName: string;                   // Имя текущего файла лога
     FClosingRecipt:boolean;
     FStopLog:boolean;
     procedure ClearCheckMarkResault;
@@ -179,12 +182,15 @@ type
     function LoadCheckParamsFromCSV: Boolean;
     function SaveResultsToCSV: Boolean;
     procedure ClearAllData;
+    procedure InitLogFile;
     procedure LogMessage(const Msg: string);
+    procedure LogToFile(const Msg: string);
     function FindMarkInCache(const MarkCodeBase64: string; out CachedResult: TMarkResult): Boolean;
     procedure AddMarkToCache(const MarkResult: TMarkResult);
     function MarkExistsInInputArray(const MarkCodeBase64: string): Boolean;
     procedure ProcessMarkCode(var Mark: TInputMark);
     function CheckMarkByPermitMode(const MarkCode: string; const IPServer: string; Port: Integer): TMarkResult;
+    procedure SaveProgressInfo(CurrentPosition: Integer);
   public
     { Public declarations }
     // Инициализация: установите FLogMemo в нужный TMemo компонент
@@ -359,6 +365,31 @@ begin
   end;
 end;
 
+// Сохранение информации о прогрессе проверки марок
+procedure TCheckMarksForm.SaveProgressInfo(CurrentPosition: Integer);
+var
+  Lines: TStringList;
+  TotalMarks, CheckedMarks: Integer;
+begin
+  Lines := TStringList.Create;
+  try
+    TotalMarks := Length(FInputMarks);
+    CheckedMarks := Length(FCheckCache);
+    
+    // Заголовок
+    Lines.Add('CurrentPosition;TotalMarks;CheckedMarks');
+    
+    // Данные о прогрессе
+    Lines.Add(IntToStr(CurrentPosition) + ';' + 
+              IntToStr(TotalMarks) + ';' + 
+              IntToStr(CheckedMarks));
+    
+    Lines.SaveToFile(CSV_PROGRESS_INFO, TEncoding.UTF8);
+  finally
+    Lines.Free;
+  end;
+end;
+
 // Таймер для проверки команд от 1С через файловую систему
 procedure TCheckMarksForm.TimerCheckMarksTimer(Sender: TObject);
 begin
@@ -380,19 +411,22 @@ begin
       TDirectory.CreateDirectory(COMMAND_PATH);
       Exit;
     end;
-    
+
     // Получаем все файлы из папки команд
     CommandFiles := TDirectory.GetFiles(COMMAND_PATH, '*.*');
-    
+
     if Length(CommandFiles) = 0 then
       Exit; // Нет команд
-    
+
+    //отключаем таймер, пока не отработают команды
+    TimerForCommandsFrom1c.Enabled:=false;
+
     // Обрабатываем каждый файл команды
     for CommandFile in CommandFiles do
     begin
       // Извлекаем имя команды (без расширения и пути)
       CommandName := TPath.GetFileNameWithoutExtension(CommandFile);
-      
+
       LogMessage('Получена команда от 1С: ' + CommandName);
 
       if CommandName = COMMANDS_FROM_1C_PROCCES_NEW then
@@ -450,6 +484,8 @@ begin
       LogMessage('ОШИБКА обработки команд: ' + E.Message);
     end;
   end;
+
+  TimerForCommandsFrom1c.Enabled:=true;
 end;
 
 procedure TCheckMarksForm.ButtonGetMarksForCheckClick(Sender: TObject);
@@ -524,6 +560,9 @@ begin
       LogMessage('  Статус: ' + FInputMarks[i].PlannedStatus);
       LogMessage('  Осталось проверить: ' + IntToStr(Length(FInputMarks) - Length(FCheckCache)));
       
+      // Сохраняем информацию о прогрессе в файл для 1С
+      SaveProgressInfo(FInputMarks[i].Position);
+      
       found := True;
       Exit;
     end;
@@ -538,6 +577,10 @@ begin
     LogMessage('✓ Все марки уже проверены!');
     LogMessage('  Всего марок: ' + IntToStr(Length(FInputMarks)));
     LogMessage('  Проверено: ' + IntToStr(Length(FCheckCache)));
+    
+    // Сохраняем информацию о завершении проверки всех марок
+    if Length(FInputMarks) > 0 then
+      SaveProgressInfo(0); // 0 означает, что все проверки завершены
   end;
 end;
 
@@ -592,6 +635,10 @@ begin
  FStopLog:=false;
  FClosingRecipt:=false;
  FLogMemo:=LogsMemo;
+ 
+ // Инициализируем логирование в файл
+ InitLogFile;
+ 
  CreateDriverKKTButtonClick(self);
 end;
 
@@ -678,16 +725,93 @@ end;
 
 // === КОНЕЦ ФУНКЦИЙ РАБОТЫ С КЭШЕМ ===
 
+// Инициализация файла лога
+procedure TCheckMarksForm.InitLogFile;
+var
+  LogDir: string;
+begin
+  LogDir := LOGS_PATH;
+  
+  // Создаем папку для логов, если её нет
+  if not TDirectory.Exists(LogDir) then
+  begin
+    try
+      TDirectory.CreateDirectory(LogDir);
+    except
+      on E: Exception do
+      begin
+        // Если не удалось создать папку, логи не будут писаться в файл
+        FLogFileName := '';
+        Exit;
+      end;
+    end;
+  end;
+  
+  // Формируем имя файла лога с датой и временем
+  FLogFileName := LogDir + 'checkmarks_' + FormatDateTime('yyyymmdd_hhnnss', Now) + '.log';
+  
+  // Создаем файл и пишем заголовок
+  try
+    var Lines := TStringList.Create;
+    try
+      Lines.Add('=== Лог работы программы проверки марок ===');
+      Lines.Add('Дата запуска: ' + FormatDateTime('dd.mm.yyyy hh:nn:ss', Now));
+      Lines.Add('===================================');
+      Lines.Add('');
+      Lines.SaveToFile(FLogFileName, TEncoding.UTF8);
+    finally
+      Lines.Free;
+    end;
+  except
+    on E: Exception do
+    begin
+      FLogFileName := '';
+    end;
+  end;
+end;
+
+// Запись в файл лога
+procedure TCheckMarksForm.LogToFile(const Msg: string);
+var
+  LogFile: TextFile;
+begin
+  if FLogFileName = '' then
+    Exit;
+    
+  try
+    AssignFile(LogFile, FLogFileName);
+    if FileExists(FLogFileName) then
+      Append(LogFile)
+    else
+      Rewrite(LogFile);
+      
+    try
+      WriteLn(LogFile, Msg);
+    finally
+      CloseFile(LogFile);
+    end;
+  except
+    // Игнорируем ошибки записи в файл
+  end;
+end;
+
 // Процедура логирования сообщений
 procedure TCheckMarksForm.LogMessage(const Msg: string);
+var
+  LogMsg: string;
 begin
   // TODO: Установить FLogMemo := нужный TMemo компонент
   // Например: FLogMemo := MemoTasks;
 
+  LogMsg := '[' + FormatDateTime('hh:nn:ss', Now) + '] ' + Msg;
+
   if Assigned(FLogMemo) and not(FStopLog) then
   begin
-    FLogMemo.Lines.Add('[' + FormatDateTime('hh:nn:ss', Now) + '] ' + Msg);
+    FLogMemo.Lines.Add(LogMsg);
   end;
+
+  // Пишем в файл
+  LogToFile(LogMsg);
 
   // Также выводим в консоль для отладки
   {$IFDEF DEBUG}
@@ -999,7 +1123,7 @@ var
  MarkForCheck:string;
  WasCheckingAny:boolean;
 begin
-  TimerForCommandsFrom1c.Enabled:=false; //вроучную будем проверять команды
+  //TimerForCommandsFrom1c.Enabled:=false; //вроучную будем проверять команды
   WasCheckingAny:=false;
   LogMessage('=== КНОПКА: ЗАПУСК ЦИКЛА ПРОВЕРКИ МАРОК ===');
   TimerCheckMarks.Enabled:=false; //отключаем таймер, пока полностью не завершим проверку марок по одному циклу
@@ -1029,12 +1153,10 @@ begin
   end;
 
   if WasCheckingAny then ButtonSaveResultsClick(self);
-  TimerForCommandsFrom1c.OnTimer(self);
 
   if not FClosingRecipt then //если мы не в процессе закрытия чеки, то продолжим цикл
    TimerCheckMarks.Enabled:=true; //через сколько то секунду запускам очередной цикл провекри марок
-
-  TimerForCommandsFrom1c.Enabled:=true;
+  //TimerForCommandsFrom1c.Enabled:=true;
 end;
 
 procedure TCheckMarksForm.ButtonReceiptClosingClick(Sender: TObject);

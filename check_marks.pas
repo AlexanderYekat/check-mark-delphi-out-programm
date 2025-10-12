@@ -49,6 +49,7 @@ type
   
   // Структура параметров чека
   TCheckParams = record
+    INNFirmy:string; //ИНН Фирмы
     CheckType: string;      // sell / return
     CashierName: string;
     TimeZone: Integer;
@@ -139,6 +140,8 @@ type
     EditComPortKKT: TEdit;
     ButtonStopLog: TButton;
     ButtonBeginLog: TButton;
+    EditINNFirmy: TEdit;
+    LabelVersionCaption: TLabel;
     procedure ButtonGetMarksForCheckClick(Sender: TObject);
     procedure CreateDriverKKTButtonClick(Sender: TObject);
     procedure ButtonConnectToKKTClick(Sender: TObject);
@@ -284,9 +287,10 @@ begin
     end;
     
     // Базовые параметры
-    FCheckParams.CheckType := Trim(Fields[0]);
-    FCheckParams.CashierName := Trim(Fields[1]);
-    FCheckParams.TimeZone := StrToIntDef(Trim(Fields[2]), 6);
+    FCheckParams.INNFirmy:=Trim(Fields[0]);
+    FCheckParams.CheckType := Trim(Fields[1]);
+    FCheckParams.CashierName := Trim(Fields[2]);
+    FCheckParams.TimeZone := StrToIntDef(Trim(Fields[3]), 6);
 
     FCheckParams.NumComPort:=0;
     FCheckParams.vklRR:=true;
@@ -298,15 +302,16 @@ begin
 
     if Length(Fields) > 3 then begin
       // Новые параметры
-      FCheckParams.NumComPort := StrToIntDef(Trim(Fields[3]), 0);
-      FCheckParams.vklRR := SameText(Trim(Fields[4]), 'Да');
-      FCheckParams.IpRR := Trim(Fields[5]);
-      FCheckParams.PortRR := StrToIntDef(Trim(Fields[6]), 2578);
-      FCheckParams.test := SameText(Trim(Fields[7]), 'Да');
-      FCheckParams.EmulWaitFromOISM := SameText(Trim(Fields[8]), 'Да');
-      FCheckParams.EmulMistFromOISM := SameText(Trim(Fields[9]), 'Да');
+      FCheckParams.NumComPort := StrToIntDef(Trim(Fields[4]), 0);
+      FCheckParams.vklRR := SameText(Trim(Fields[5]), 'Да');
+      FCheckParams.IpRR := Trim(Fields[6]);
+      FCheckParams.PortRR := StrToIntDef(Trim(Fields[7]), 2578);
+      FCheckParams.test := SameText(Trim(Fields[8]), 'Да');
+      FCheckParams.EmulWaitFromOISM := SameText(Trim(Fields[9]), 'Да');
+      FCheckParams.EmulMistFromOISM := SameText(Trim(Fields[10]), 'Да');
 
-      LogMessage('Параметры загружены: Тип=' + FCheckParams.CheckType +
+      LogMessage('Параметры загружены: ИНН фирмы = ' + FCheckParams.INNFirmy +
+                 ', Тип=' + FCheckParams.CheckType +
                  ', Кассир=' + FCheckParams.CashierName +
                  ', ComPort=' + IntToStr(FCheckParams.NumComPort) +
                  ', vklRR=' + BoolToStr(FCheckParams.vklRR, true) +
@@ -453,6 +458,7 @@ begin
   LabelResultCommandDescr.Caption:=RESULT_COMMAND_OK;
   if LoadCheckParamsFromCSV then
   begin
+    EditINNFirmy.Text:=FCheckParams.INNFirmy;
     CheckBoxEmulationKKT.Checked:=FCheckParams.test;
     CheckRRVkl.Checked:=FCheckParams.vklRR;
     EditIpRR.Text:=FCheckParams.IpRR;
@@ -792,6 +798,12 @@ begin
       exit;
     end;
 
+
+    if CheckBoxEmulWaitOISM.Checked then begin
+     LogMessage('Делаем паузцу в 5 секунд');
+     Sleep(5000);
+     LogMessage('Пауза закончилась');
+    end;
     fptr.getMarkingCodeValidationStatus;
     if not fptr.getParamBool(fptr.LIBFPTR_PARAM_MARKING_CODE_VALIDATION_READY)
         and not (CheckBoxEmulationKKT.Checked) and not (CheckBoxEmulMistOISM.Checked) then
@@ -987,8 +999,9 @@ var
  MarkForCheck:string;
  WasCheckingAny:boolean;
 begin
+  TimerForCommandsFrom1c.Enabled:=false; //вроучную будем проверять команды
   WasCheckingAny:=false;
-  LogMessage('=== КОМАНДА: ЗАПУСК ЦИКЛА ПРОВЕРКИ МАРОК ===');
+  LogMessage('=== КНОПКА: ЗАПУСК ЦИКЛА ПРОВЕРКИ МАРОК ===');
   TimerCheckMarks.Enabled:=false; //отключаем таймер, пока полностью не завершим проверку марок по одному циклу
 
   // Загружаем марки из CSV
@@ -1005,16 +1018,23 @@ begin
 
     ButtonAddToTableClick(self); //запоминаем результаты проверки
 
+    //TimerForCommandsFrom1c.OnTimer(self); //может от 1с придёт какая команда
+    //if FClosingRecipt then break;  //выходим из цикла проверовк марок, если чек уже закрывается
+    ////1с сама проверит оставшиеся марки
+
     ButtonGetNextMarkClick(self); //получем очередное задания для проверки
     MarkForCheck:=EditCurrentMarkBase64.Text;
 
-    if FClosingRecipt then break; //выходим из цикла, если чек уже закрывается
+    if FClosingRecipt then break; //выходим из цикла, если чек уже закрывается, не сработает, так как поток занят обработкой проверки марок и не смотрит, что приходит от 1с
   end;
 
   if WasCheckingAny then ButtonSaveResultsClick(self);
+  TimerForCommandsFrom1c.OnTimer(self);
 
   if not FClosingRecipt then //если мы не в процессе закрытия чеки, то продолжим цикл
    TimerCheckMarks.Enabled:=true; //через сколько то секунду запускам очередной цикл провекри марок
+
+  TimerForCommandsFrom1c.Enabled:=true;
 end;
 
 procedure TCheckMarksForm.ButtonReceiptClosingClick(Sender: TObject);
@@ -1068,6 +1088,7 @@ begin
 end;
 
 // Функция проверки марки по разрешительному режиму через HTTP
+// ВАЖНО: MarkCode должен быть в формате Base64!
 function TCheckMarksForm.CheckMarkByPermitMode(const MarkCode: string; const IPServer: string; Port: Integer): TMarkResult;
 var
   HTTPClient: THTTPClient;
@@ -1091,20 +1112,26 @@ begin
   
   HTTPClient := THTTPClient.Create;
   try
-    HTTPClient.ConnectionTimeout := 30000; // 30 секунд
-    HTTPClient.ResponseTimeout := 30000;
+    HTTPClient.ConnectionTimeout := 10000; // 10 секунд
+    HTTPClient.ResponseTimeout := 10000;
     
     // Формируем JSON запрос
     RequestJSON := TJSONObject.Create;
     try
       RequestJSON.AddPair('action', 'check');
       RequestJSON.AddPair('type', 'receipt');
+      //RequestJSON.AddPair('shift', '0456010012345654');  // TODO: получать реальный номер смены
       
       // Массив позиций
       PositionsArray := TJSONArray.Create;
       PositionObj := TJSONObject.Create;
       
-      // Массив кодов маркировки
+      // Добавляем organization с inn
+      var OrgObj := TJSONObject.Create;
+      OrgObj.AddPair('inn', EditINNFirmy.Text);  // TODO: получать реальный ИНН
+      PositionObj.AddPair('organization', OrgObj);
+      
+      // Массив кодов маркировки (марка уже должна быть в Base64!)
       CodesArray := TJSONArray.Create;
       CodesArray.Add(MarkCode);
       
@@ -1136,68 +1163,111 @@ begin
           CleanJSON := StringReplace(CleanJSON, '"fmu-api-localModul"', '"fmuApiLocalModul"', [rfReplaceAll]);
           
           // Парсим JSON ответ
+          LogMessage('РР: Парсим JSON, длина: ' + IntToStr(Length(CleanJSON)));
           JSONValue := TJSONObject.ParseJSONValue(CleanJSON);
           try
-            if Assigned(JSONValue) and (JSONValue is TJSONObject) then
+            if Assigned(JSONValue) then
             begin
-              ResponseJSON := JSONValue as TJSONObject;
-              
-              // Получаем Code (код FMU)
-              if ResponseJSON.TryGetValue('Code', JSONValue) then
-                Result.PermitCheckCode := StrToIntDef(JSONValue.Value, -1);
-              
-              // Получаем Error (описание ошибки FMU)
-              if ResponseJSON.TryGetValue('Error', JSONValue) then
-                Result.PermitCheckDescription := JSONValue.Value;
-              
-              // Получаем данные из truemark_response
-              if ResponseJSON.TryGetValue('truemark_response', JSONValue) and (JSONValue is TJSONObject) then
+              LogMessage('РР: JSONValue присвоен, тип: ' + JSONValue.ClassName);
+              if JSONValue is TJSONObject then
               begin
-                TruemarkResponse := JSONValue as TJSONObject;
+                LogMessage('РР: JSONValue является TJSONObject - парсим дальше');
+                ResponseJSON := JSONValue as TJSONObject;
                 
-                // code - код от ЧЗ МАК
-                if TruemarkResponse.TryGetValue('code', JSONValue) then
-                  Result.PermitCheckCode := StrToIntDef(JSONValue.Value, Result.PermitCheckCode);
-                
-                // description
-                if TruemarkResponse.TryGetValue('description', JSONValue) then
-                  Result.PermitCheckDescription := JSONValue.Value;
-                
-                // reqId (UUID)
-                if TruemarkResponse.TryGetValue('reqId', JSONValue) then
+                // Получаем Code (код FMU) - основной код из корня JSON
+                if ResponseJSON.TryGetValue('code', JSONValue) then
                 begin
-                  ReqIdValue := JSONValue.Value;
-                  // Удаляем &Inst из UUID, если есть
-                  PosInst := Pos('&Inst', ReqIdValue);
-                  if PosInst > 0 then
-                    ReqIdValue := Copy(ReqIdValue, 1, PosInst - 1);
-                  Result.UUID := ReqIdValue;
+                  Result.PermitCheckCode := StrToIntDef(JSONValue.Value, -1);
+                  LogMessage('РР: Основной код FMU: ' + IntToStr(Result.PermitCheckCode));
                 end;
                 
-                // reqTimestamp
-                if TruemarkResponse.TryGetValue('reqTimestamp', JSONValue) then
-                  Result.TimeStamp := JSONValue.Value;
+                // Получаем Error (описание ошибки FMU) - основное описание из корня JSON
+                if ResponseJSON.TryGetValue('error', JSONValue) then
+                begin
+                  Result.PermitCheckDescription := JSONValue.Value;
+                  LogMessage('РР: Основное описание FMU: ' + Result.PermitCheckDescription);
+                end;
                 
-                // inst
-                if TruemarkResponse.TryGetValue('inst', JSONValue) then
-                  Result.Inst := JSONValue.Value;
+                // Получаем данные из truemark_response
+                if ResponseJSON.TryGetValue('truemark_response', JSONValue) and (JSONValue is TJSONObject) then
+                begin
+                  TruemarkResponse := JSONValue as TJSONObject;
+                  
+                  // code - код от ЧЗ МАК (перезаписывает только если основной код = 0)
+                  if TruemarkResponse.TryGetValue('code', JSONValue) then
+                  begin
+                    var TruemarkCode := StrToIntDef(JSONValue.Value, Result.PermitCheckCode);
+                    if Result.PermitCheckCode = 0 then
+                    begin
+                      LogMessage('РР: Код ЧЗ МАК: ' + IntToStr(TruemarkCode) + ' (перезаписывает основной код ' + IntToStr(Result.PermitCheckCode) + ')');
+                      Result.PermitCheckCode := TruemarkCode;
+                    end
+                    else
+                    begin
+                      LogMessage('РР: Код ЧЗ МАК: ' + IntToStr(TruemarkCode) + ' (НЕ перезаписывает основной код ' + IntToStr(Result.PermitCheckCode) + ' - основной код не равен 0)');
+                    end;
+                  end;
+                  
+                  // description - перезаписывает только если основной код = 0
+                  if TruemarkResponse.TryGetValue('description', JSONValue) then
+                  begin
+                    if Result.PermitCheckCode = 0 then
+                    begin
+                      LogMessage('РР: Описание ЧЗ МАК: ' + JSONValue.Value + ' (перезаписывает основное описание "' + Result.PermitCheckDescription + '")');
+                      Result.PermitCheckDescription := JSONValue.Value;
+                    end
+                    else
+                    begin
+                      LogMessage('РР: Описание ЧЗ МАК: ' + JSONValue.Value + ' (НЕ перезаписывает основное описание "' + Result.PermitCheckDescription + '" - основной код не равен 0)');
+                    end;
+                  end;
+                  
+                  // reqId (UUID)
+                  if TruemarkResponse.TryGetValue('reqId', JSONValue) then
+                  begin
+                    ReqIdValue := JSONValue.Value;
+                    // Удаляем &Inst из UUID, если есть
+                    PosInst := Pos('&Inst', ReqIdValue);
+                    if PosInst > 0 then
+                      ReqIdValue := Copy(ReqIdValue, 1, PosInst - 1);
+                    Result.UUID := ReqIdValue;
+                  end;
+                  
+                  // reqTimestamp
+                  if TruemarkResponse.TryGetValue('reqTimestamp', JSONValue) then
+                    Result.TimeStamp := JSONValue.Value;
+                  
+                  // inst
+                  if TruemarkResponse.TryGetValue('inst', JSONValue) then
+                    Result.Inst := JSONValue.Value;
+                  
+                  // version
+                  if TruemarkResponse.TryGetValue('version', JSONValue) then
+                    Result.Ver := JSONValue.Value;
+                end;
                 
-                // version
-                if TruemarkResponse.TryGetValue('version', JSONValue) then
-                  Result.Ver := JSONValue.Value;
+                LogMessage('РР: Code=' + IntToStr(Result.PermitCheckCode) + ', Descr=' + Result.PermitCheckDescription);
+                LogMessage('РР: UUID=' + Result.UUID);
+              end
+              else
+              begin
+                LogMessage('РР: ОШИБКА - JSONValue не является TJSONObject, тип: ' + JSONValue.ClassName);
+                Result.PermitCheckDescription := 'Ошибка: JSON не является объектом, тип: ' + JSONValue.ClassName;
               end;
-              
-              LogMessage('РР: Code=' + IntToStr(Result.PermitCheckCode) + ', Descr=' + Result.PermitCheckDescription);
-              LogMessage('РР: UUID=' + Result.UUID);
             end
             else
             begin
-              Result.PermitCheckDescription := 'Ошибка парсинга JSON ответа';
+              LogMessage('РР: ОШИБКА - JSONValue не присвоен');
+              Result.PermitCheckDescription := 'Ошибка: не удалось распарсить JSON';
+            end;
+          except
+            on E: Exception do
+            begin
+              Result.PermitCheckDescription := 'Ошибка парсинга JSON: ' + E.Message;
               LogMessage('РР: ' + Result.PermitCheckDescription);
             end;
-          finally
-            JSONValue.Free;
           end;
+          JSONValue.Free;
         end
         else
         begin
@@ -1224,19 +1294,19 @@ end;
 
 procedure TCheckMarksForm.ButtonCheckPermitMarkClick(Sender: TObject);
 var
-  MarkCode: string;
+  MarkCodeBase64: string;
   IPServer: string;
   Port: Integer;
   PermitResult: TMarkResult;
 begin
   LogMessage('=== ПРОВЕРКА МАРКИ ПО РАЗРЕШИТЕЛЬНОМУ РЕЖИМУ ===');
   
-  // Получаем параметры
-  MarkCode := EditCurrentMark.Text;
+  // Получаем параметры - ВАЖНО: для РР нужна марка в Base64!
+  MarkCodeBase64 := EditCurrentMarkBase64.Text;
   IPServer := Trim(EditIpRR.Text);
   Port := StrToIntDef(Trim(EditPortRR.Text), 2578);
   
-  if MarkCode = '' then
+  if MarkCodeBase64 = '' then
   begin
     LogMessage('РР: ОШИБКА - не указана марка для проверки');
     Exit;
@@ -1248,8 +1318,8 @@ begin
     Exit;
   end;
   
-  // Выполняем проверку
-  PermitResult := CheckMarkByPermitMode(MarkCode, IPServer, Port);
+  // Выполняем проверку (передаем Base64 версию марки)
+  PermitResult := CheckMarkByPermitMode(MarkCodeBase64, IPServer, Port);
   
   // Заполняем поля формы результатами
   EditCodeResultCheckPermit.Text := IntToStr(PermitResult.PermitCheckCode);

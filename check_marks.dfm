@@ -211,6 +211,13 @@ object CheckMarksForm: TCheckMarksForm
     Height = 15
     Caption = 'LabelLastCommand'
   end
+  object LabelVersionCaption: TLabel
+    Left = 8
+    Top = 8
+    Width = 69
+    Height = 15
+    Caption = '2025.10.12.01'
+  end
   object MemoMarks: TMemo
     Left = 64
     Top = 75
@@ -220,7 +227,7 @@ object CheckMarksForm: TCheckMarksForm
   end
   object EditSellOrReturn: TEdit
     Left = 413
-    Top = 75
+    Top = 99
     Width = 121
     Height = 23
     TabOrder = 1
@@ -553,9 +560,9 @@ object CheckMarksForm: TCheckMarksForm
   end
   object ButtonCancelRecipt: TButton
     Left = 959
-    Top = 547
+    Top = 560
     Width = 121
-    Height = 35
+    Height = 22
     Caption = 'ButtonCancelRecipt'
     TabOrder = 38
     OnClick = ButtonCancelReciptClick
@@ -634,6 +641,14 @@ object CheckMarksForm: TCheckMarksForm
     Caption = 'ButtonBeginLog'
     TabOrder = 47
     OnClick = ButtonBeginLogClick
+  end
+  object EditINNFirmy: TEdit
+    Left = 413
+    Top = 70
+    Width = 121
+    Height = 23
+    TabOrder = 48
+    Text = 'EditINNFirmy'
   end
   object TimerForCommandsFrom1c: TTimer
     OnTimer = TimerForCommandsFrom1cTimer

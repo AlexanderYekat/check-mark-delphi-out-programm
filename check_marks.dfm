@@ -216,7 +216,13 @@ object CheckMarksForm: TCheckMarksForm
     Top = 8
     Width = 69
     Height = 15
-    Caption = '2025.10.12.02'
+    Caption = '2025.10.16.01'
+    Font.Charset = DEFAULT_CHARSET
+    Font.Color = clWindowText
+    Font.Height = -12
+    Font.Name = 'Segoe UI'
+    Font.Style = []
+    ParentFont = False
   end
   object MemoMarks: TMemo
     Left = 64
@@ -379,8 +385,6 @@ object CheckMarksForm: TCheckMarksForm
     Width = 145
     Height = 17
     Caption = 'CheckBoxEmulationKKT'
-    Checked = True
-    State = cbChecked
     TabOrder = 19
   end
   object EditCassierName: TEdit
@@ -649,6 +653,14 @@ object CheckMarksForm: TCheckMarksForm
     Height = 23
     TabOrder = 48
     Text = 'EditINNFirmy'
+  end
+  object Button1: TButton
+    Left = 254
+    Top = 543
+    Width = 75
+    Height = 25
+    Caption = 'Button1'
+    TabOrder = 49
   end
   object TimerForCommandsFrom1c: TTimer
     OnTimer = TimerForCommandsFrom1cTimer

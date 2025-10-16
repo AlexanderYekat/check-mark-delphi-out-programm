@@ -5,7 +5,7 @@ interface
 uses
   Winapi.Windows, Winapi.Messages, System.SysUtils, System.Variants, System.Classes, Vcl.Graphics,
   Vcl.Controls, Vcl.Forms, Vcl.Dialogs, Vcl.StdCtrls, ComObj, System.JSON, System.IOUtils, System.NetEncoding,
-  Vcl.ExtCtrls, System.Net.HttpClient, System.Net.URLClient;
+  Vcl.ExtCtrls, System.Net.HttpClient, System.Net.URLClient, System.DateUtils;
 
 const
   DRIVER_NOT_INIT = 'не инициализирован';
@@ -144,6 +144,7 @@ type
     ButtonBeginLog: TButton;
     EditINNFirmy: TEdit;
     LabelVersionCaption: TLabel;
+    Button1: TButton;
     procedure ButtonGetMarksForCheckClick(Sender: TObject);
     procedure CreateDriverKKTButtonClick(Sender: TObject);
     procedure ButtonConnectToKKTClick(Sender: TObject);
@@ -183,6 +184,7 @@ type
     function SaveResultsToCSV: Boolean;
     procedure ClearAllData;
     procedure InitLogFile;
+    procedure CleanOldLogs;
     procedure LogMessage(const Msg: string);
     procedure LogToFile(const Msg: string);
     function FindMarkInCache(const MarkCodeBase64: string; out CachedResult: TMarkResult): Boolean;
@@ -501,7 +503,7 @@ begin
     EditPortRR.Text:=IntToStr(FCheckParams.PortRR);
     EditComPortKKT.Text:=IntToStr(FCheckParams.NumComPort);
     CheckBoxEmulWaitOISM.Checked:=FCheckParams.EmulWaitFromOISM;
-    CheckBoxEmulMistOISM.Checked:=FCheckParams.EmulMistFromOISM;
+    //CheckBoxEmulMistOISM.Checked:=FCheckParams.EmulMistFromOISM;
 
     ComboBoxTimeZone.ItemIndex:=FCheckParams.TimeZone-1;
   end;
@@ -725,6 +727,54 @@ end;
 
 // === КОНЕЦ ФУНКЦИЙ РАБОТЫ С КЭШЕМ ===
 
+// Очистка старых логов (старше 14 дней)
+procedure TCheckMarksForm.CleanOldLogs;
+var
+  LogDir: string;
+  LogFiles: TArray<string>;
+  LogFile: string;
+  FileAge: TDateTime;
+  DeletedCount: Integer;
+begin
+  LogDir := LOGS_PATH;
+  
+  if not TDirectory.Exists(LogDir) then
+    Exit;
+    
+  DeletedCount := 0;
+  
+  try
+    // Получаем все файлы .log в папке логов
+    LogFiles := TDirectory.GetFiles(LogDir, '*.log');
+    
+    for LogFile in LogFiles do
+    begin
+      try
+        // Получаем дату последней модификации файла
+        FileAge := TFile.GetLastWriteTime(LogFile);
+        
+        // Если файл старше 14 дней, удаляем его
+        if DaysBetween(Now, FileAge) > 14 then
+        begin
+          TFile.Delete(LogFile);
+          Inc(DeletedCount);
+        end;
+      except
+        // Игнорируем ошибки при удалении отдельных файлов
+      end;
+    end;
+    
+    if DeletedCount > 0 then
+    begin
+      // Логируем только в Memo, так как файл лога ещё не инициализирован
+      if Assigned(FLogMemo) then
+        FLogMemo.Lines.Add('[' + FormatDateTime('hh:nn:ss', Now) + '] Удалено старых логов: ' + IntToStr(DeletedCount));
+    end;
+  except
+    // Игнорируем любые ошибки при очистке логов
+  end;
+end;
+
 // Инициализация файла лога
 procedure TCheckMarksForm.InitLogFile;
 var
@@ -746,6 +796,9 @@ begin
       end;
     end;
   end;
+  
+  // Очищаем старые логи
+  CleanOldLogs;
   
   // Формируем имя файла лога с датой и временем
   FLogFileName := LogDir + 'checkmarks_' + FormatDateTime('yyyymmdd_hhnnss', Now) + '.log';
@@ -773,22 +826,18 @@ end;
 // Запись в файл лога
 procedure TCheckMarksForm.LogToFile(const Msg: string);
 var
-  LogFile: TextFile;
+  Writer: TStreamWriter;
 begin
   if FLogFileName = '' then
     Exit;
     
   try
-    AssignFile(LogFile, FLogFileName);
-    if FileExists(FLogFileName) then
-      Append(LogFile)
-    else
-      Rewrite(LogFile);
-      
+    // Открываем файл для добавления с кодировкой UTF-8
+    Writer := TStreamWriter.Create(FLogFileName, True, TEncoding.UTF8);
     try
-      WriteLn(LogFile, Msg);
+      Writer.WriteLine(Msg);
     finally
-      CloseFile(LogFile);
+      Writer.Free;
     end;
   except
     // Игнорируем ошибки записи в файл
@@ -807,6 +856,13 @@ begin
 
   if Assigned(FLogMemo) and not(FStopLog) then
   begin
+    // Если превышено 500 строк, очищаем Memo
+    if FLogMemo.Lines.Count > 500 then
+    begin
+      FLogMemo.Clear;
+      FLogMemo.Lines.Add('[' + FormatDateTime('hh:nn:ss', Now) + '] === ЛОГ ОЧИЩЕН (превышено 500 строк) ===');
+    end;
+    
     FLogMemo.Lines.Add(LogMsg);
   end;
 
@@ -897,7 +953,11 @@ begin
 
     // Выполнение данного потока останавливается до тех пор, пока не будет выполнена проверка КМ!
     ErrorCode := fptr.errorCode;
+    errorDescr:=fptr.errorDescription;
+    LogMessage(IntToStr(ErrorCode));
+    LogMessage(errorDescr);
     if ErrorCode = 401 then begin //процедура проверки марки уже была запущена
+      LogMessage('Процедура проверки уже была запущена');
       fptr.cancelMarkingCodeValidation;
 
       fptr.setParam(fptr.LIBFPTR_PARAM_MARKING_CODE_TYPE, fptr.LIBFPTR_MCT12_AUTO);
@@ -910,6 +970,9 @@ begin
       //fptr.setParam(fptr.LIBFPTR_PARAM_TIMEOUT, 120000);
       fptr.beginMarkingCodeValidation;
       ErrorCode := fptr.errorCode;
+      errorDescr:=fptr.errorDescription;
+      LogMessage(IntToStr(ErrorCode));
+      LogMessage(errorDescr);
     end;
 
 
@@ -918,6 +981,8 @@ begin
       ResultCodeCheckOnKKTEdit.Text:=IntToStr(ErrorCode);
       ResultDescrCheckOnKKTEdit.Text:=errorDescr;
 
+      LogMessage(IntToStr(ErrorCode));
+      LogMessage(errorDescr);
       ButtonDissconnectFromKKTClick(self);
       exit;
     end;
@@ -928,17 +993,26 @@ begin
      Sleep(5000);
      LogMessage('Пауза закончилась');
     end;
-    fptr.getMarkingCodeValidationStatus;
-    if not fptr.getParamBool(fptr.LIBFPTR_PARAM_MARKING_CODE_VALIDATION_READY)
-        and not (CheckBoxEmulationKKT.Checked) and not (CheckBoxEmulMistOISM.Checked) then
+
+    while True do
     begin
+        sleep(300);
+        fptr.getMarkingCodeValidationStatus;
+        if fptr.getParamBool(fptr.LIBFPTR_PARAM_MARKING_CODE_VALIDATION_READY) then
+            break;
+    end;
+    //fptr.getMarkingCodeValidationStatus;
+   {*if (not fptr.getParamBool(fptr.LIBFPTR_PARAM_MARKING_CODE_VALIDATION_READY)
+        and not (CheckBoxEmulationKKT.Checked)) or CheckBoxEmulMistOISM.Checked then
+    begin
+      ErrorCode := fptr.errorCode;
       errorDescr:=fptr.errorDescription;
       ResultCodeCheckOnKKTEdit.Text:=IntToStr(ErrorCode);
       ResultDescrCheckOnKKTEdit.Text:=errorDescr;
 
       ButtonDissconnectFromKKTClick(self);
       exit;
-    end;
+    end;*}
     validationResult := fptr.getParamInt(fptr.LIBFPTR_PARAM_MARKING_CODE_ONLINE_VALIDATION_RESULT);
 
     actionType := 'acceptMarkingCode';
@@ -946,6 +1020,8 @@ begin
 
     ErrorCode := fptr.errorCode;
     errorDescr:=fptr.errorDescription;
+
+    LogMessage('validationResult = ' + IntToStr(validationResult));
 
     ButtonDissconnectFromKKTClick(self);
 
@@ -1134,9 +1210,17 @@ begin
 
   ButtonGetNextMarkClick(self); //получем первое задания для проверки
   MarkForCheck:=EditCurrentMarkBase64.Text;
+
+  if MarkForCheck <> '' then begin
+    //CheckMarkOnKKTButtonClick(self); //запускаем провекру марки на ККТ
+    //ButtonOpenShiftIfNeedClick(self);
+  end;
+
   while MarkForCheck <> '' do begin
     WasCheckingAny:=true;
-    CheckMarkOnKKTButtonClick(self); //запускаем провекру марки на ККТ
+    //ButtonCheckStatusKKTClick(self);
+
+    CheckMarkOnKKTButtonClick(self);
     if CheckRRVkl.Checked then //запускаем проверку марок по РР
       ButtonCheckPermitMarkClick(self);
 

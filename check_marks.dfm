@@ -216,7 +216,7 @@ object CheckMarksForm: TCheckMarksForm
     Top = 8
     Width = 69
     Height = 15
-    Caption = '2025.10.16.01'
+    Caption = '2025.10.16.04'
     Font.Charset = DEFAULT_CHARSET
     Font.Color = clWindowText
     Font.Height = -12

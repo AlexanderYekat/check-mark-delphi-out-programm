@@ -38,6 +38,11 @@ const
   COMMANDS_FROM_1C_CANCEL_RECEIPT = 'cancel';
   COMMANDS_FROM_1C_CLOSING_RECEIPT = 'closing';
   COMMANDS_FROM_1C_CLOSED_RECEIPT = 'closed';
+  COMMANDS_FROM_1C_PRINT_RECEIPT = 'print_receipt';
+  
+  // Файлы для печати чека через JSON
+  CSV_RECEIPT_REQUEST = 'c:\share\checkmarks\receipt_request.json';   // Входной JSON чека от 1С
+  CSV_RECEIPT_RESPONSE = 'c:\share\checkmarks\receipt_response.json'; // Выходной результат для 1С
 
 type
   // Структура входных данных о марке
@@ -193,6 +198,9 @@ type
     procedure ProcessMarkCode(var Mark: TInputMark);
     function CheckMarkByPermitMode(const MarkCode: string; const IPServer: string; Port: Integer): TMarkResult;
     procedure SaveProgressInfo(CurrentPosition: Integer);
+    function ExecuteReceiptJSON(const RequestJSON: string; out ResponseJSON: string; out ErrorCode: Integer; out ErrorDescription: string): Boolean;
+    function GetMockReceiptResponse(const RequestJSON: string): string;
+    procedure ProcessPrintReceiptCommand();
   public
     { Public declarations }
     // Инициализация: установите FLogMemo в нужный TMemo компонент
@@ -392,6 +400,292 @@ begin
   end;
 end;
 
+// Формирование мок-ответа для режима эмуляции
+function TCheckMarksForm.GetMockReceiptResponse(const RequestJSON: string): string;
+var
+  ResponseObj: TJSONObject;
+  FiscalParamsObj: TJSONObject;
+  CurrentDateTime: TDateTime;
+  DateTimeStr: string;
+begin
+  ResponseObj := TJSONObject.Create;
+  try
+    // Определяем тип операции по содержимому запроса
+    
+    // Если это продажа (sell) или возврат (sellReturn)
+    if (Pos('sell', LowerCase(RequestJSON)) > 0) or (Pos('sellReturn', LowerCase(RequestJSON)) > 0) then
+    begin
+      // Формируем fiscalParams - фискальные параметры чека
+      FiscalParamsObj := TJSONObject.Create;
+      
+      CurrentDateTime := Now;
+      DateTimeStr := FormatDateTime('yyyy-mm-dd', CurrentDateTime) + 'T' + 
+                     FormatDateTime('hh:nn:ss', CurrentDateTime) + '+03:00';
+      
+      FiscalParamsObj.AddPair('fiscalDocumentDateTime', DateTimeStr);
+      FiscalParamsObj.AddPair('fiscalDocumentNumber', TJSONNumber.Create(123));
+      FiscalParamsObj.AddPair('fiscalDocumentSign', '1494325660');
+      FiscalParamsObj.AddPair('fiscalReceiptNumber', TJSONNumber.Create(1));
+      FiscalParamsObj.AddPair('fnNumber', '9999078900000961');
+      FiscalParamsObj.AddPair('registrationNumber', '0000000001002292');
+      FiscalParamsObj.AddPair('shiftNumber', TJSONNumber.Create(12));
+      FiscalParamsObj.AddPair('total', TJSONNumber.Create(72.34));
+      FiscalParamsObj.AddPair('fnsUrl', 'www.nalog.gov.ru');
+      
+      ResponseObj.AddPair('fiscalParams', FiscalParamsObj);
+      ResponseObj.AddPair('warnings', '');
+    end
+    // Если это закрытие смены (closeShift)
+    else if Pos('closeShift', LowerCase(RequestJSON)) > 0 then
+    begin
+      FiscalParamsObj := TJSONObject.Create;
+      
+      CurrentDateTime := Now;
+      DateTimeStr := FormatDateTime('yyyy-mm-dd', CurrentDateTime) + 'T' + 
+                     FormatDateTime('hh:nn:ss', CurrentDateTime) + '+03:00';
+      
+      FiscalParamsObj.AddPair('fiscalDocumentDateTime', DateTimeStr);
+      FiscalParamsObj.AddPair('fiscalDocumentNumber', TJSONNumber.Create(456));
+      FiscalParamsObj.AddPair('fiscalDocumentSign', '2345678901');
+      FiscalParamsObj.AddPair('fnNumber', '9999078900000961');
+      FiscalParamsObj.AddPair('registrationNumber', '0000000001002292');
+      FiscalParamsObj.AddPair('shiftNumber', TJSONNumber.Create(12));
+      
+      ResponseObj.AddPair('fiscalParams', FiscalParamsObj);
+      ResponseObj.AddPair('warnings', '');
+    end
+    // Если это открытие смены (openShift)
+    else if Pos('openShift', LowerCase(RequestJSON)) > 0 then
+    begin
+      FiscalParamsObj := TJSONObject.Create;
+      
+      CurrentDateTime := Now;
+      DateTimeStr := FormatDateTime('yyyy-mm-dd', CurrentDateTime) + 'T' + 
+                     FormatDateTime('hh:nn:ss', CurrentDateTime) + '+03:00';
+      
+      FiscalParamsObj.AddPair('fiscalDocumentDateTime', DateTimeStr);
+      FiscalParamsObj.AddPair('fiscalDocumentNumber', TJSONNumber.Create(1));
+      FiscalParamsObj.AddPair('fiscalDocumentSign', '1234567890');
+      FiscalParamsObj.AddPair('fnNumber', '9999078900000961');
+      FiscalParamsObj.AddPair('registrationNumber', '0000000001002292');
+      FiscalParamsObj.AddPair('shiftNumber', TJSONNumber.Create(12));
+      
+      ResponseObj.AddPair('fiscalParams', FiscalParamsObj);
+      ResponseObj.AddPair('warnings', '');
+    end
+    // Для всех остальных операций - простой ответ
+    else
+    begin
+      ResponseObj.AddPair('result', 'OK');
+      ResponseObj.AddPair('emulation', TJSONBool.Create(True));
+    end;
+    
+    Result := ResponseObj.ToString;
+    
+  finally
+    ResponseObj.Free;
+  end;
+end;
+
+// Выполнение JSON команды на ККТ
+function TCheckMarksForm.ExecuteReceiptJSON(const RequestJSON: string; out ResponseJSON: string; 
+  out ErrorCode: Integer; out ErrorDescription: string): Boolean;
+var
+  CloseConnection: Boolean;
+  NomComPorta: Integer;
+begin
+  Result := False;
+  ResponseJSON := '';
+  ErrorCode := 0;
+  ErrorDescription := 'OK';
+  CloseConnection := True; // Закрываем соединение после выполнения
+  
+  try
+    LogMessage('=== ВЫПОЛНЕНИЕ JSON КОМАНДЫ ===');
+    LogMessage('JSON запрос: ' + RequestJSON);
+    
+    // Подключаемся к ККТ если не эмуляция
+    if not CheckBoxEmulationKKT.Checked then
+    begin
+      if not fptr.isOpened then
+      begin
+        NomComPorta := StrToIntDef(EditComPortKKT.Text, 0);
+        if NomComPorta > 0 then
+        begin
+          fptr.setSingleSetting(fptr.LIBFPTR_SETTING_PORT, fptr.LIBFPTR_PORT_COM);
+          fptr.setSingleSetting(fptr.LIBFPTR_SETTING_COM_FILE, NomComPorta);
+          fptr.setSingleSetting(fptr.LIBFPTR_SETTING_BAUDRATE, fptr.LIBFPTR_PORT_BR_115200);
+        end
+        else
+          fptr.setSingleSetting(fptr.LIBFPTR_SETTING_PORT, fptr.LIBFPTR_PORT_USB);
+        fptr.setSingleSetting(fptr.LIBFPTR_SETTING_TIME_ZONE, ComboBoxTimeZone.ItemIndex + 1);
+        fptr.applySingleSettings;
+        fptr.open;
+        
+        if not fptr.isOpened then
+        begin
+          ErrorCode := fptr.errorCode;
+          ErrorDescription := fptr.errorDescription;
+          LogMessage('ОШИБКА подключения к ККТ: ' + ErrorDescription);
+          Exit;
+        end;
+      end;
+    end;
+    
+    // Выполняем JSON команду через драйвер
+    if CheckBoxEmulationKKT.Checked then
+    begin
+      // Эмуляция - возвращаем реалистичный мок-ответ
+      ResponseJSON := GetMockReceiptResponse(RequestJSON);
+      ErrorCode := 0;
+      ErrorDescription := 'OK (эмуляция)';
+      LogMessage('Эмуляция: команда выполнена успешно');
+      LogMessage('Мок-ответ: ' + ResponseJSON);
+    end
+    else
+    begin
+      // Реальное выполнение через драйвер
+      fptr.setParam(fptr.LIBFPTR_PARAM_JSON_DATA, RequestJSON);
+      fptr.processJson();
+      
+      ErrorCode := fptr.errorCode;
+      if ErrorCode <> 0 then
+      begin
+        ErrorDescription := fptr.errorDescription;
+        LogMessage('ОШИБКА выполнения JSON: [' + IntToStr(ErrorCode) + '] ' + ErrorDescription);
+      end
+      else
+      begin
+        ResponseJSON := fptr.getParamString(fptr.LIBFPTR_PARAM_JSON_DATA);
+        ErrorDescription := 'OK';
+        LogMessage('JSON команда выполнена успешно');
+        LogMessage('JSON ответ: ' + ResponseJSON);
+      end;
+    end;
+    
+    // Закрываем соединение если нужно
+    if CloseConnection and not CheckBoxEmulationKKT.Checked then
+    begin
+      fptr.close;
+      LogMessage('Отключились от ККТ');
+    end;
+    
+    Result := (ErrorCode = 0);
+    
+  except
+    on E: Exception do
+    begin
+      ErrorCode := -1;
+      ErrorDescription := 'Исключение: ' + E.Message;
+      LogMessage('ОШИБКА: ' + ErrorDescription);
+      Result := False;
+    end;
+  end;
+end;
+
+// Обработка команды печати чека через JSON
+procedure TCheckMarksForm.ProcessPrintReceiptCommand();
+var
+  RequestJSON: string;
+  ResponseJSON: string;
+  ErrorCode: Integer;
+  ErrorDescription: string;
+  ResponseLines: TStringList;
+  ResponseObj: TJSONObject;
+begin
+  try
+    LogMessage('=== ОБРАБОТКА КОМАНДЫ ПЕЧАТИ ЧЕКА ===');
+    
+    // Проверяем наличие файла с запросом
+    if not FileExists(CSV_RECEIPT_REQUEST) then
+    begin
+      LogMessage('ОШИБКА: Файл с JSON чека не найден: ' + CSV_RECEIPT_REQUEST);
+      Exit;
+    end;
+    
+    // Читаем JSON из файла
+    try
+      var Lines := TStringList.Create;
+      try
+        Lines.LoadFromFile(CSV_RECEIPT_REQUEST, TEncoding.UTF8);
+        RequestJSON := Lines.Text;
+        LogMessage('Прочитан JSON чека, размер: ' + IntToStr(Length(RequestJSON)) + ' символов');
+      finally
+        Lines.Free;
+      end;
+    except
+      on E: Exception do
+      begin
+        LogMessage('ОШИБКА чтения файла запроса: ' + E.Message);
+        Exit;
+      end;
+    end;
+    
+    // Выполняем команду
+    if ExecuteReceiptJSON(RequestJSON, ResponseJSON, ErrorCode, ErrorDescription) then
+      LogMessage('✓ Печать чека выполнена успешно')
+    else
+      LogMessage('✗ Ошибка печати чека: [' + IntToStr(ErrorCode) + '] ' + ErrorDescription);
+    
+    // Формируем ответ в формате JSON
+    ResponseObj := TJSONObject.Create;
+    try
+      ResponseObj.AddPair('ответJSON', ResponseJSON);
+      ResponseObj.AddPair('кодОшибки', TJSONNumber.Create(ErrorCode));
+      ResponseObj.AddPair('описаниеОшибки', ErrorDescription);
+      
+      // Сохраняем ответ в файл
+      ResponseLines := TStringList.Create;
+      try
+        ResponseLines.Text := ResponseObj.ToString;
+        ResponseLines.SaveToFile(CSV_RECEIPT_RESPONSE, TEncoding.UTF8);
+        LogMessage('✓ Результат сохранен в файл: ' + CSV_RECEIPT_RESPONSE);
+      finally
+        ResponseLines.Free;
+      end;
+    finally
+      ResponseObj.Free;
+    end;
+    
+    // Удаляем файл запроса после обработки
+    try
+      TFile.Delete(CSV_RECEIPT_REQUEST);
+      LogMessage('✓ Файл запроса удален');
+    except
+      on E: Exception do
+        LogMessage('ПРЕДУПРЕЖДЕНИЕ: Не удалось удалить файл запроса: ' + E.Message);
+    end;
+    
+  except
+    on E: Exception do
+    begin
+      LogMessage('КРИТИЧЕСКАЯ ОШИБКА при обработке команды печати чека: ' + E.Message);
+      
+      // Пытаемся сохранить ошибку в файл ответа
+      try
+        ResponseObj := TJSONObject.Create;
+        try
+          ResponseObj.AddPair('ответJSON', '');
+          ResponseObj.AddPair('кодОшибки', TJSONNumber.Create(-1));
+          ResponseObj.AddPair('описаниеОшибки', 'Критическая ошибка: ' + E.Message);
+          
+          ResponseLines := TStringList.Create;
+          try
+            ResponseLines.Text := ResponseObj.ToString;
+            ResponseLines.SaveToFile(CSV_RECEIPT_RESPONSE, TEncoding.UTF8);
+          finally
+            ResponseLines.Free;
+          end;
+        finally
+          ResponseObj.Free;
+        end;
+      except
+        // Игнорируем ошибки при попытке сохранить ошибку
+      end;
+    end;
+  end;
+end;
+
 // Таймер для проверки команд от 1С через файловую систему
 procedure TCheckMarksForm.TimerCheckMarksTimer(Sender: TObject);
 begin
@@ -433,9 +727,15 @@ begin
 
       if CommandName = COMMANDS_FROM_1C_PROCCES_NEW then
       begin
-        // Команда: отменить чек
+        // Команда: новый чек
         LogMessage('→ Команда: НОВЫЙ ЧЕК');
         ButtonCancelReciptClick(Self);
+      end
+      else if CommandName = COMMANDS_FROM_1C_PRINT_RECEIPT then
+      begin
+        // Команда: печать чека через JSON
+        LogMessage('→ Команда: ПЕЧАТЬ ЧЕКА (JSON)');
+        ProcessPrintReceiptCommand();
       end
       // Выполняем команду в зависимости от имени
       else if CommandName = COMMANDS_FROM_1C_PROCCES_RECEIPT then
@@ -994,12 +1294,41 @@ begin
      LogMessage('Пауза закончилась');
     end;
 
-    while True do
+    // Ожидание ответа от ОИСМ с таймаутом 60 секунд
+    var StartTime := Now;
+    var TimeoutSeconds := 60;
+
+    while True and not (CheckBoxEmulationKKT.Checked) do
     begin
         sleep(300);
         fptr.getMarkingCodeValidationStatus;
+        ErrorCode := fptr.errorCode;
+        errorDescr:=fptr.errorDescription;
+
+        // Проверка ошибки при запросе статуса
+        if (ErrorCode <> 0) then begin
+          ResultCodeCheckOnKKTEdit.Text:=IntToStr(ErrorCode);
+          ResultDescrCheckOnKKTEdit.Text:=errorDescr;
+          LogMessage('Ошибка при запросе статуса проверки марки: ' + errorDescr);
+          ButtonDissconnectFromKKTClick(self);
+          exit;
+        end;
+        
+        // Проверка готовности результата
         if fptr.getParamBool(fptr.LIBFPTR_PARAM_MARKING_CODE_VALIDATION_READY) then
             break;
+        
+        // Проверка таймаута (60 секунд)
+        if SecondsBetween(Now, StartTime) > TimeoutSeconds then
+        begin
+          ErrorCode := -1;
+          errorDescr := 'Таймаут ожидания ответа от ОИСМ (' + IntToStr(TimeoutSeconds) + ' сек)';
+          ResultCodeCheckOnKKTEdit.Text := IntToStr(ErrorCode);
+          ResultDescrCheckOnKKTEdit.Text := errorDescr;
+          LogMessage('ОШИБКА: ' + errorDescr);
+          ButtonDissconnectFromKKTClick(self);
+          exit;
+        end;
     end;
     //fptr.getMarkingCodeValidationStatus;
    {*if (not fptr.getParamBool(fptr.LIBFPTR_PARAM_MARKING_CODE_VALIDATION_READY)

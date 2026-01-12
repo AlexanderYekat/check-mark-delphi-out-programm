@@ -150,6 +150,7 @@ type
     EditINNFirmy: TEdit;
     LabelVersionCaption: TLabel;
     Button1: TButton;
+    DonCloseConnectionWithKKTCheckBox: TCheckBox;
     procedure ButtonGetMarksForCheckClick(Sender: TObject);
     procedure CreateDriverKKTButtonClick(Sender: TObject);
     procedure ButtonConnectToKKTClick(Sender: TObject);
@@ -498,8 +499,8 @@ begin
   ResponseJSON := '';
   ErrorCode := 0;
   ErrorDescription := 'OK';
-  CloseConnection := True; // Закрываем соединение после выполнения
-  
+  CloseConnection := not DonCloseConnectionWithKKTCheckBox.Checked; // Закрываем соединение после выполнения
+
   try
     LogMessage('=== ВЫПОЛНЕНИЕ JSON КОМАНДЫ ===');
     LogMessage('JSON запрос: ' + RequestJSON);
@@ -546,7 +547,7 @@ begin
     begin
       // Реальное выполнение через драйвер
       fptr.setParam(fptr.LIBFPTR_PARAM_JSON_DATA, RequestJSON);
-      fptr.processJson();
+      fptr.processJson;
       
       ErrorCode := fptr.errorCode;
       if ErrorCode <> 0 then
@@ -1948,9 +1949,14 @@ end;
 
 procedure TCheckMarksForm.ButtonDissconnectFromKKTClick(Sender: TObject);
 begin
-  fptr.close;
-  LogMessage('отключились от ККТ');
-  LabelConnectionWithKKT.Caption:='disconnected';
+  if not DonCloseConnectionWithKKTCheckBox.Checked then begin
+    fptr.close;
+    LogMessage('отключились от ККТ');
+    LabelConnectionWithKKT.Caption:='disconnected';
+  end else begin
+    LogMessage('отключились от ККТ - не отключаемся');
+    //LabelConnectionWithKKT.Caption:='disconnected';
+  end;
 end;
 
 procedure TCheckMarksForm.ButtonDestroyDiverKKTClick(Sender: TObject);

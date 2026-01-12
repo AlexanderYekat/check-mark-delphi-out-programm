@@ -214,9 +214,9 @@ object CheckMarksForm: TCheckMarksForm
   object LabelVersionCaption: TLabel
     Left = 8
     Top = 8
-    Width = 69
+    Width = 343
     Height = 15
-    Caption = '2025.10.16.04'
+    Caption = '2025.12.28.01 ('#1076#1086#1073#1072#1074#1080#1083' '#1086#1087#1094#1080#1102' '#1085#1077' '#1079#1072#1082#1088#1099#1074#1072#1090#1100' '#1089#1086#1077#1076#1080#1085#1077#1085#1080#1077' '#1089' '#1050#1050#1058')'
     Font.Charset = DEFAULT_CHARSET
     Font.Color = clWindowText
     Font.Height = -12
@@ -661,6 +661,16 @@ object CheckMarksForm: TCheckMarksForm
     Height = 25
     Caption = 'Button1'
     TabOrder = 49
+  end
+  object DonCloseConnectionWithKKTCheckBox: TCheckBox
+    Left = 264
+    Top = 56
+    Width = 241
+    Height = 17
+    Caption = 'DonCloseConnectionWithKKTCheckBox'
+    Checked = True
+    State = cbChecked
+    TabOrder = 50
   end
   object TimerForCommandsFrom1c: TTimer
     OnTimer = TimerForCommandsFrom1cTimer

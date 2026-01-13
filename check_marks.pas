@@ -19,6 +19,7 @@ const
   
   // Пути к CSV файлам
   CSV_INPUT_MARKS = 'c:\share\checkmarks\input_marks.csv';        // Входной файл с марками от 1С
+  CSV_INPUT_GENERAL_PARAMS = 'c:\share\checkmarks\params_of_programm.csv';      // общие параметры программы
   CSV_INPUT_PARAMS = 'c:\share\checkmarks\input_params.csv';      // Параметры чека (кассир, тип, таймзона)
   CSV_OUTPUT_RESULTS = 'c:\share\checkmarks\output_results.csv';  // Выходной файл с результатами для 1С
   CSV_PROGRESS_INFO = 'c:\share\checkmarks\progress_info.csv';    // Файл с информацией о прогрессе проверки
@@ -53,9 +54,25 @@ type
     MarkCodeKI: string;
     PlannedStatus: string;
   end;
-  
+
   // Структура параметров чека
-  TCheckParams = record
+  RGeneralParams = record
+    TimeZone: Integer;
+    NumComPort: integer;     // Номер COM порта или "Нет"
+    vklRR: Boolean;          // Включение РР: "localhost" или IP адрес
+    IpRR: string;           // IP адрес РР
+    PortRR: Integer;        // Порт РР
+    test: Boolean;          // Тестовый режим
+    EmulWaitFromOISM: Boolean;  // Эмуляция ожидания от ОИСМ
+    EmulMistFromOISM: Boolean;  // Эмуляция ошибки от ОИСМ
+    OpenConnectOnRunProgramm: boolean;
+    KeepConnectWhileRunProgramm: boolean;
+    EmulationTormozaKKT:boolean; //эмуляция тормозов ККТ
+    PauseTormozovKKTInSeconds:integer; //пауза в секундах эмуляции ККТ
+  end;
+
+  // Структура параметров чека
+  RCheckParams = record
     INNFirmy:string; //ИНН Фирмы
     CheckType: string;      // sell / return
     CashierName: string;
@@ -68,7 +85,7 @@ type
     EmulWaitFromOISM: Boolean;  // Эмуляция ожидания от ОИСМ
     EmulMistFromOISM: Boolean;  // Эмуляция ошибки от ОИСМ
   end;
-  
+
   // Структура результата проверки марки
   TMarkResult = record
     Position: Integer;
@@ -151,6 +168,8 @@ type
     LabelVersionCaption: TLabel;
     Button1: TButton;
     DonCloseConnectionWithKKTCheckBox: TCheckBox;
+    CheckBoxEmulationTormoz: TCheckBox;
+    EditPauseTormozaKKTEmul: TEdit;
     procedure ButtonGetMarksForCheckClick(Sender: TObject);
     procedure CreateDriverKKTButtonClick(Sender: TObject);
     procedure ButtonConnectToKKTClick(Sender: TObject);
@@ -176,7 +195,8 @@ type
     { Private declarations }
     fptr: OLEVariant;
     FInputMarks: TArray<TInputMark>;       // Загруженные марки из CSV
-    FCheckParams: TCheckParams;             // Параметры чека
+    FGeneralParams: RGeneralParams;
+    FCheckParams: RCheckParams;             // Параметры чека
     FCheckCache: TArray<TMarkResult>;       // Кэш проверенных марок (сохраняется в CSV)
     FLogMemo: TMemo;                        // Memo для логирования (устанавливается позже)
     FLogFileName: string;                   // Имя текущего файла лога
@@ -186,6 +206,7 @@ type
     function MarkInputToStr(InputMark: TInputMark):string;
     function MarkResultToStr(R: TMarkResult):string;
     function LoadInputMarksFromCSV: Boolean;
+    function LoadGeneralParamsFromCSV: Boolean;
     function LoadCheckParamsFromCSV: Boolean;
     function SaveResultsToCSV: Boolean;
     procedure ClearAllData;
@@ -276,6 +297,83 @@ begin
 end;
 
 // Загрузка параметров чека из CSV файла
+function TCheckMarksForm.LoadGeneralParamsFromCSV: Boolean;
+var
+  Lines: TStringList;
+  Fields: TArray<string>;
+begin
+  Result := False;
+
+  FGeneralParams.NumComPort:=0;
+  FGeneralParams.vklRR:=false;
+  FGeneralParams.IpRR:='localhost';
+  FGeneralParams.PortRR:=2578;
+  FGeneralParams.test:=true;
+  FGeneralParams.EmulWaitFromOISM:=false;
+  FGeneralParams.EmulMistFromOISM:=false;
+  FGeneralParams.OpenConnectOnRunProgramm:=true;
+  FGeneralParams.KeepConnectWhileRunProgramm:=true;
+  FGeneralParams.EmulationTormozaKKT:=false;
+  FGeneralParams.PauseTormozovKKTInSeconds:=60;
+
+  if not FileExists(CSV_INPUT_GENERAL_PARAMS) then
+  begin
+    LogMessage('Предупреждение: Файл с параметрами запуска программы не найден: ' + CSV_INPUT_GENERAL_PARAMS);
+    Exit;
+  end;
+
+  Lines := TStringList.Create;
+  try
+    Lines.LoadFromFile(CSV_INPUT_GENERAL_PARAMS, TEncoding.UTF8);
+
+    if Lines.Count < 2 then Exit;
+
+    // Вторая строка - данные (первая - заголовок)
+    Fields := Lines[1].Split([';']);
+    if Length(Fields) < 3 then
+    begin
+      LogMessage('ОШИБКА: Недостаточно параметров в CSV файле (ожидается 10, получено ' + IntToStr(Length(Fields)) + ')');
+      Exit;
+    end;
+
+    // Базовые параметры
+    FGeneralParams.TimeZone := StrToIntDef(Trim(Fields[0]), 4);
+
+    if Length(Fields) > 3 then begin
+      // Новые параметры
+      FGeneralParams.NumComPort := StrToIntDef(Trim(Fields[1]), 0);
+      FGeneralParams.vklRR := SameText(Trim(Fields[2]), 'Да');
+      FGeneralParams.IpRR := Trim(Fields[3]);
+      FGeneralParams.PortRR := StrToIntDef(Trim(Fields[4]), 2578);
+      FGeneralParams.test := SameText(Trim(Fields[5]), 'Да');
+      FGeneralParams.EmulWaitFromOISM := SameText(Trim(Fields[6]), 'Да');
+      FGeneralParams.EmulMistFromOISM := SameText(Trim(Fields[7]), 'Да');
+      FGeneralParams.OpenConnectOnRunProgramm:=SameText(Trim(Fields[8]), 'Да');
+      FGeneralParams.KeepConnectWhileRunProgramm:=SameText(Trim(Fields[9]), 'Да');
+      FGeneralParams.EmulationTormozaKKT:=SameText(Trim(Fields[10]), 'Нет');
+      FGeneralParams.PauseTormozovKKTInSeconds := StrToIntDef(Trim(Fields[11]), 60);
+
+      LogMessage('Параметры запуска программы: ComPort=' + IntToStr(FGeneralParams.NumComPort) +
+                 ', vklRR=' + BoolToStr(FGeneralParams.vklRR, true) +
+                 ', IP=' + FGeneralParams.IpRR +
+                 ', Port=' + IntToStr(FGeneralParams.PortRR) +
+                 ', Test=' + BoolToStr(FGeneralParams.test, False) +
+                 ', EmulWait=' + BoolToStr(FGeneralParams.EmulWaitFromOISM, False) +
+                 ', EmulMist=' + BoolToStr(FGeneralParams.EmulMistFromOISM, False) +
+                 ', OpenConnectOnRunProgramm=' + BoolToStr(FGeneralParams.OpenConnectOnRunProgramm, False) +
+                 ', KeepConnectWhileRunProgramm=' + BoolToStr(FGeneralParams.KeepConnectWhileRunProgramm, False) +
+                 ', EmulationTormozaKKT=' + BoolToStr(FGeneralParams.EmulationTormozaKKT, False) +
+                 ', PauseTormozovKKTInSeconds=' + IntToStr(FGeneralParams.PauseTormozovKKTInSeconds)
+                 );
+    end;
+    Result := True;
+  finally
+    Lines.Free;
+  end;
+end; //LoadGeneralParamsFromCSV
+
+
+// Загрузка параметров чека из CSV файла
 function TCheckMarksForm.LoadCheckParamsFromCSV: Boolean;
 var
   Lines: TStringList;
@@ -285,7 +383,7 @@ begin
   
   if not FileExists(CSV_INPUT_PARAMS) then
   begin
-    LogMessage('ОШИБКА: Файл с параметрами не найден: ' + CSV_INPUT_PARAMS);
+    LogMessage('ОШИБКА: Файл с параметрами чека не найден: ' + CSV_INPUT_PARAMS);
     Exit;
   end;
   
@@ -906,7 +1004,7 @@ begin
   SetLength(FCheckCache, 0);
   FCheckParams.CheckType := '';
   FCheckParams.CashierName := '';
-  FCheckParams.TimeZone := 6;
+  FCheckParams.TimeZone := 4;
   LogMessage('Все данные очищены, кэш сброшен');
 end;
 
@@ -941,8 +1039,36 @@ begin
  
  // Инициализируем логирование в файл
  InitLogFile;
- 
+
+ LoadGeneralParamsFromCSV();
+
+ CheckBoxEmulationKKT.Checked:=FGeneralParams.test;
+ CheckRRVkl.Checked:=FGeneralParams.vklRR;
+ EditIpRR.Text:=FGeneralParams.IpRR;
+ EditPortRR.Text:=IntToStr(FGeneralParams.PortRR);
+ EditComPortKKT.Text:=IntToStr(FGeneralParams.NumComPort);
+ CheckBoxEmulWaitOISM.Checked:=FGeneralParams.EmulWaitFromOISM;
+ CheckBoxEmulationTormoz.Checked:=FGeneralParams.EmulationTormozaKKT;
+ EditPauseTormozaKKTEmul.Text:=IntToStr(FGeneralParams.PauseTormozovKKTInSeconds);
+
+ FCheckParams.NumComPort:=FGeneralParams.NumComPort;
+ FCheckParams.vklRR:=FGeneralParams.vklRR;
+ FCheckParams.test:=FGeneralParams.test;
+ FCheckParams.PortRR:=FGeneralParams.PortRR;
+ FCheckParams.NumComPort:=FGeneralParams.NumComPort;
+ FCheckParams.EmulWaitFromOISM:=FGeneralParams.EmulWaitFromOISM;
+
+ DonCloseConnectionWithKKTCheckBox.Checked:=FGeneralParams.KeepConnectWhileRunProgramm;
+
+ ComboBoxTimeZone.ItemIndex:=FGeneralParams.TimeZone-1;
+
+
  CreateDriverKKTButtonClick(self);
+
+ if FGeneralParams.OpenConnectOnRunProgramm then begin
+   ButtonConnectToKKTClick(self);
+ end;
+
 end;
 
 // Добавление или обновление результата проверки в кэше
@@ -1893,8 +2019,15 @@ var
   isOpened :boolean;
   textOfConnection:string;
   NomComPorta:integer;
+  PauseTormozovKKT, CodeMist:integer;
 begin
+  LogMessage('=== КНОПКА: ПОДКЛЮЧИТЬСЯ К ККТ ===');
   isOpened := fptr.isOpened;
+  if CheckBoxEmulationKKT.Checked then begin
+   if (POS('not connected', LabelConnectionWithKKT.Caption) = 0) and
+        (POS('connected', LabelConnectionWithKKT.Caption) > 0)
+   then isOpened:=true;
+  end;
   if isOpened then
     textOfConnection:='connected'
   else begin
@@ -1909,6 +2042,11 @@ begin
     fptr.applySingleSettings;
     fptr.open;
     isOpened := fptr.isOpened;
+    if CheckBoxEmulationKKT.Checked and CheckBoxEmulationTormoz.Checked then begin
+      Val(EditPauseTormozaKKTEmul.Text, PauseTormozovKKT, CodeMist);
+      if CodeMist <> 0 then PauseTormozovKKT:=60; //по умолчанию 60 секунд
+      sleep(PauseTormozovKKT*1000);
+    end;
   end;
   if CheckBoxEmulationKKT.Checked then begin
     isOpened:=true;
@@ -1919,7 +2057,7 @@ begin
   if CheckBoxEmulationKKT.Checked then
     LabelConnectionWithKKT.Caption:=textOfConnection;
   if isOpened then LogMessage('подключились к ККТ');
-
+  LogMessage('=== КНОПКА: ПОДКЛЮЧИТЬСЯ К ККТ - END ===');
 end;
 
 procedure TCheckMarksForm.ButtonOpenShiftIfNeedClick(Sender: TObject);

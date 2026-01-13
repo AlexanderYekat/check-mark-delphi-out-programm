@@ -212,11 +212,11 @@ object CheckMarksForm: TCheckMarksForm
     Caption = 'LabelLastCommand'
   end
   object LabelVersionCaption: TLabel
-    Left = 8
-    Top = 8
+    Left = 556
+    Top = 566
     Width = 343
     Height = 15
-    Caption = '2025.12.28.01 ('#1076#1086#1073#1072#1074#1080#1083' '#1086#1087#1094#1080#1102' '#1085#1077' '#1079#1072#1082#1088#1099#1074#1072#1090#1100' '#1089#1086#1077#1076#1080#1085#1077#1085#1080#1077' '#1089' '#1050#1050#1058')'
+    Caption = '2026.01.13.01 ('#1076#1086#1073#1072#1074#1080#1083' '#1086#1087#1094#1080#1102' '#1085#1077' '#1079#1072#1082#1088#1099#1074#1072#1090#1100' '#1089#1086#1077#1076#1080#1085#1077#1085#1080#1077' '#1089' '#1050#1050#1058')'
     Font.Charset = DEFAULT_CHARSET
     Font.Color = clWindowText
     Font.Height = -12
@@ -226,7 +226,7 @@ object CheckMarksForm: TCheckMarksForm
   end
   object MemoMarks: TMemo
     Left = 64
-    Top = 75
+    Top = 81
     Width = 326
     Height = 112
     TabOrder = 0
@@ -429,13 +429,13 @@ object CheckMarksForm: TCheckMarksForm
     Top = 142
     Width = 145
     Height = 23
-    ItemIndex = 0
+    ItemIndex = 2
     TabOrder = 23
-    Text = 'UTC+2'
+    Text = 'UTC+4'
     Items.Strings = (
       'UTC+2'
       'UTC+3'
-      'UTC+3'
+      'UTC+4'
       'UTC+5'
       'UTC+6'
       'UTC+7'
@@ -455,8 +455,8 @@ object CheckMarksForm: TCheckMarksForm
     TabOrder = 24
   end
   object ButtonGetMarksForCheck: TButton
-    Left = 63
-    Top = 24
+    Left = 62
+    Top = 57
     Width = 186
     Height = 25
     Caption = 'ButtonGetMarksForCheck'
@@ -671,6 +671,24 @@ object CheckMarksForm: TCheckMarksForm
     Checked = True
     State = cbChecked
     TabOrder = 50
+  end
+  object CheckBoxEmulationTormoz: TCheckBox
+    Left = 72
+    Top = 8
+    Width = 176
+    Height = 17
+    Caption = 'CheckBoxEmulationTormoz'
+    Checked = True
+    State = cbChecked
+    TabOrder = 51
+  end
+  object EditPauseTormozaKKTEmul: TEdit
+    Left = 72
+    Top = 28
+    Width = 121
+    Height = 23
+    TabOrder = 52
+    Text = 'EditPauseTormozaKKTEmul'
   end
   object TimerForCommandsFrom1c: TTimer
     OnTimer = TimerForCommandsFrom1cTimer

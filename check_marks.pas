@@ -634,6 +634,7 @@ begin
     // Выполняем JSON команду через драйвер
     if CheckBoxEmulationKKT.Checked then
     begin
+
       // Эмуляция - возвращаем реалистичный мок-ответ
       ResponseJSON := GetMockReceiptResponse(RequestJSON);
       ErrorCode := 0;
@@ -646,7 +647,7 @@ begin
       // Реальное выполнение через драйвер
       fptr.setParam(fptr.LIBFPTR_PARAM_JSON_DATA, RequestJSON);
       fptr.processJson;
-      
+
       ErrorCode := fptr.errorCode;
       if ErrorCode <> 0 then
       begin
@@ -2045,7 +2046,9 @@ begin
     if CheckBoxEmulationKKT.Checked and CheckBoxEmulationTormoz.Checked then begin
       Val(EditPauseTormozaKKTEmul.Text, PauseTormozovKKT, CodeMist);
       if CodeMist <> 0 then PauseTormozovKKT:=60; //по умолчанию 60 секунд
+      LogMessage('=== ПАУЗА - ЭМУЛЯЦИЯ ТОРОМЗОВ ККТ ===');
       sleep(PauseTormozovKKT*1000);
+      LogMessage('=== ПАУЗА - ЭМУЛЯЦИЯ ТОРОМЗОВ ККТ END ===');
     end;
   end;
   if CheckBoxEmulationKKT.Checked then begin

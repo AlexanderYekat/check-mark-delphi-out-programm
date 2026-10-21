@@ -214,15 +214,50 @@ object CheckMarksForm: TCheckMarksForm
   object LabelVersionCaption: TLabel
     Left = 556
     Top = 566
-    Width = 343
+    Width = 484
     Height = 15
-    Caption = '2026.01.13.02 ('#1076#1086#1073#1072#1074#1080#1083' '#1086#1087#1094#1080#1102' '#1085#1077' '#1079#1072#1082#1088#1099#1074#1072#1090#1100' '#1089#1086#1077#1076#1080#1085#1077#1085#1080#1077' '#1089' '#1050#1050#1058')'
+    Caption = '2026.10.10.01 ('#1058#1057#1055#1080#1054#1058', '#1087#1086#1074#1090#1086#1088#1099' '#1087#1088#1086#1074#1077#1088#1082#1080' '#1084#1072#1088#1086#1082')'
     Font.Charset = DEFAULT_CHARSET
     Font.Color = clWindowText
     Font.Height = -12
     Font.Name = 'Segoe UI'
     Font.Style = []
     ParentFont = False
+  end
+  object LabelShiftNumber: TLabel
+    Left = 568
+    Top = 375
+    Width = 96
+    Height = 15
+    Caption = 'LabelShiftNumber'
+  end
+  object LabelDocNumber: TLabel
+    Left = 569
+    Top = 396
+    Width = 93
+    Height = 15
+    Caption = 'LabelDocNumber'
+  end
+  object LabelDateDoc: TLabel
+    Left = 569
+    Top = 411
+    Width = 86
+    Height = 15
+    Caption = 'LabelDateOfDoc'
+  end
+  object LabelSignDoc: TLabel
+    Left = 569
+    Top = 429
+    Width = 85
+    Height = 15
+    Caption = 'LabelSignOfDoc'
+  end
+  object LabelUserNameOfWindows: TLabel
+    Left = 411
+    Top = 128
+    Width = 145
+    Height = 15
+    Caption = 'LabelUserNameOfWindows'
   end
   object MemoMarks: TMemo
     Left = 64
@@ -362,7 +397,7 @@ object CheckMarksForm: TCheckMarksForm
     OnClick = ButtonDissconnectFromKKTClick
   end
   object ButtonConnectToKKT: TButton
-    Left = 413
+    Left = 418
     Top = 199
     Width = 136
     Height = 25
@@ -490,7 +525,7 @@ object CheckMarksForm: TCheckMarksForm
   end
   object EditValidationResult: TEdit
     Left = 416
-    Top = 512
+    Top = 508
     Width = 121
     Height = 23
     TabOrder = 29
@@ -655,12 +690,13 @@ object CheckMarksForm: TCheckMarksForm
     Text = 'EditINNFirmy'
   end
   object Button1: TButton
-    Left = 254
-    Top = 543
-    Width = 75
+    Left = 568
+    Top = 313
+    Width = 107
     Height = 25
-    Caption = 'Button1'
+    Caption = 'ButtonXReport'
     TabOrder = 49
+    OnClick = Button1Click
   end
   object DonCloseConnectionWithKKTCheckBox: TCheckBox
     Left = 264
@@ -668,8 +704,6 @@ object CheckMarksForm: TCheckMarksForm
     Width = 241
     Height = 17
     Caption = 'DonCloseConnectionWithKKTCheckBox'
-    Checked = True
-    State = cbChecked
     TabOrder = 50
   end
   object CheckBoxEmulationTormoz: TCheckBox
@@ -690,6 +724,23 @@ object CheckMarksForm: TCheckMarksForm
     TabOrder = 52
     Text = 'EditPauseTormozaKKTEmul'
   end
+  object ButtonCloseShift: TButton
+    Left = 568
+    Top = 344
+    Width = 107
+    Height = 25
+    Caption = 'ButtonCloseShift'
+    TabOrder = 53
+    OnClick = ButtonCloseShiftClick
+  end
+  object UseUserNameForNameOfWorkDirCheckBox: TCheckBox
+    Left = 413
+    Top = 145
+    Width = 97
+    Height = 17
+    Caption = 'UseUserNameForNameOfWorkDirCheckBox'
+    TabOrder = 54
+  end
   object TimerForCommandsFrom1c: TTimer
     OnTimer = TimerForCommandsFrom1cTimer
     Left = 336
@@ -701,5 +752,12 @@ object CheckMarksForm: TCheckMarksForm
     OnTimer = TimerCheckMarksTimer
     Left = 336
     Top = 264
+  end
+  object TimerInicalization: TTimer
+    Enabled = False
+    Interval = 2000
+    OnTimer = TimerInicalizationTimer
+    Left = 96
+    Top = 240
   end
 end

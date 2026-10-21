@@ -16,15 +16,16 @@ const
   RESULT_COMMAND_OK = 'OK';
   TYPE_OF_CHECK_SELL = 'sell';
   TYPE_OF_CHECK_RETURN = 'return';
-  
+
   // Пути к CSV файлам
-  CSV_INPUT_MARKS = 'c:\share\checkmarks\input_marks.csv';        // Входной файл с марками от 1С
-  CSV_INPUT_GENERAL_PARAMS = 'c:\share\checkmarks\params_of_programm.csv';      // общие параметры программы
-  CSV_INPUT_PARAMS = 'c:\share\checkmarks\input_params.csv';      // Параметры чека (кассир, тип, таймзона)
-  CSV_OUTPUT_RESULTS = 'c:\share\checkmarks\output_results.csv';  // Выходной файл с результатами для 1С
-  CSV_PROGRESS_INFO = 'c:\share\checkmarks\progress_info.csv';    // Файл с информацией о прогрессе проверки
-  COMMAND_PATH = 'c:\share\checkmarks\commands\';
-  LOGS_PATH = 'c:\share\checkmarks\logs\';                        // Папка для файлов логов
+  CSV_PATH_BEGIN = 'c:\share\checkmarks';
+  CSV_INPUT_MARKS = '\input_marks.csv';        // Входной файл с марками от 1С
+  CSV_INPUT_GENERAL_PARAMS = '\params_of_programm.csv';      // общие параметры программы
+  CSV_INPUT_PARAMS = '\input_params.csv';      // Параметры чека (кассир, тип, таймзона)
+  CSV_OUTPUT_RESULTS = '\output_results.csv';  // Выходной файл с результатами для 1С
+  CSV_PROGRESS_INFO = '\progress_info.csv';    // Файл с информацией о прогрессе проверки
+  COMMAND_PATH = '\commands\';
+  LOGS_PATH = '\logs\';                        // Папка для файлов логов
 
   PLANNED_STATUS_OF_MARK_PIECE_SOLD = 'штучный товар, реализован';
   PLANNED_STATUS_OF_MARK_DRY_FOR_SALE = 'мерный товар, в стадии реализации';
@@ -42,8 +43,10 @@ const
   COMMANDS_FROM_1C_PRINT_RECEIPT = 'print_receipt';
   
   // Файлы для печати чека через JSON
-  CSV_RECEIPT_REQUEST = 'c:\share\checkmarks\receipt_request.json';   // Входной JSON чека от 1С
-  CSV_RECEIPT_RESPONSE = 'c:\share\checkmarks\receipt_response.json'; // Выходной результат для 1С
+  //CSV_RECEIPT_REQUEST = 'c:\share\checkmarks\receipt_request.json';   // Входной JSON чека от 1С
+  //CSV_RECEIPT_RESPONSE = 'c:\share\checkmarks\receipt_response.json'; // Выходной результат для 1С
+  CSV_RECEIPT_REQUEST = '\receipt_request.json';   // Входной JSON чека от 1С
+  CSV_RECEIPT_RESPONSE = '\receipt_response.json'; // Выходной результат для 1С
 
 type
   // Структура входных данных о марке
@@ -63,10 +66,12 @@ type
     IpRR: string;           // IP адрес РР
     PortRR: Integer;        // Порт РР
     test: Boolean;          // Тестовый режим
+    userNameForWorkDirUse:boolean; //дополноять рабочую папку именем пользователя
     EmulWaitFromOISM: Boolean;  // Эмуляция ожидания от ОИСМ
     EmulMistFromOISM: Boolean;  // Эмуляция ошибки от ОИСМ
     OpenConnectOnRunProgramm: boolean;
     KeepConnectWhileRunProgramm: boolean;
+    GrpcServerPort: Integer; // Порт сервера запросов ДТО для ТСПиОТ; 0 отключает сервер
     EmulationTormozaKKT:boolean; //эмуляция тормозов ККТ
     PauseTormozovKKTInSeconds:integer; //пауза в секундах эмуляции ККТ
   end;
@@ -170,6 +175,14 @@ type
     DonCloseConnectionWithKKTCheckBox: TCheckBox;
     CheckBoxEmulationTormoz: TCheckBox;
     EditPauseTormozaKKTEmul: TEdit;
+    TimerInicalization: TTimer;
+    ButtonCloseShift: TButton;
+    LabelShiftNumber: TLabel;
+    LabelDocNumber: TLabel;
+    LabelDateDoc: TLabel;
+    LabelSignDoc: TLabel;
+    LabelUserNameOfWindows: TLabel;
+    UseUserNameForNameOfWorkDirCheckBox: TCheckBox;
     procedure ButtonGetMarksForCheckClick(Sender: TObject);
     procedure CreateDriverKKTButtonClick(Sender: TObject);
     procedure ButtonConnectToKKTClick(Sender: TObject);
@@ -191,6 +204,9 @@ type
     procedure ButtonDestroyDiverKKTClick(Sender: TObject);
     procedure ButtonStopLogClick(Sender: TObject);
     procedure ButtonBeginLogClick(Sender: TObject);
+    procedure TimerInicalizationTimer(Sender: TObject);
+    procedure Button1Click(Sender: TObject);
+    procedure ButtonCloseShiftClick(Sender: TObject);
   private
     { Private declarations }
     fptr: OLEVariant;
@@ -201,7 +217,9 @@ type
     FLogMemo: TMemo;                        // Memo для логирования (устанавливается позже)
     FLogFileName: string;                   // Имя текущего файла лога
     FClosingRecipt:boolean;
+    FMarkValidationBlocked: Boolean; // Неизвестное состояние КМ: нужен успешный cancel/new
     FStopLog:boolean;
+    FUserNameOfWindows:string;
     procedure ClearCheckMarkResault;
     function MarkInputToStr(InputMark: TInputMark):string;
     function MarkResultToStr(R: TMarkResult):string;
@@ -235,6 +253,8 @@ var
 
 implementation
 
+uses mark_validation, mark_validation_atol;
+
 {$R *.dfm}
 
 // === ФУНКЦИИ РАБОТЫ С CSV ФАЙЛАМИ ===
@@ -250,16 +270,16 @@ begin
   Result := False;
   SetLength(FInputMarks, 0);
   MemoMarks.Clear;
-  
-  if not FileExists(CSV_INPUT_MARKS) then
+
+  if not FileExists(CSV_PATH_BEGIN+FUserNameOfWindows+CSV_INPUT_MARKS) then
   begin
-    LogMessage('ОШИБКА: Файл с марками не найден: ' + CSV_INPUT_MARKS);
+    LogMessage('ОШИБКА: Файл с марками не найден: ' + CSV_PATH_BEGIN+FUserNameOfWindows+CSV_INPUT_MARKS);
     Exit;
   end;
 
   Lines := TStringList.Create;
   try
-    Lines.LoadFromFile(CSV_INPUT_MARKS, TEncoding.UTF8);
+    Lines.LoadFromFile(CSV_PATH_BEGIN+FUserNameOfWindows+CSV_INPUT_MARKS, TEncoding.UTF8);
 
     // Пропускаем заголовок (первую строку)
     for i := 1 to Lines.Count - 1 do
@@ -305,34 +325,36 @@ begin
   Result := False;
 
   FGeneralParams.NumComPort:=0;
-  FGeneralParams.vklRR:=false;
+  FGeneralParams.vklRR:=true;
   FGeneralParams.IpRR:='localhost';
   FGeneralParams.PortRR:=2578;
-  FGeneralParams.test:=true;
+  FGeneralParams.test:=false;
+  FGeneralParams.userNameForWorkDirUse:=false;
   FGeneralParams.EmulWaitFromOISM:=false;
   FGeneralParams.EmulMistFromOISM:=false;
   FGeneralParams.OpenConnectOnRunProgramm:=true;
-  FGeneralParams.KeepConnectWhileRunProgramm:=true;
+  FGeneralParams.KeepConnectWhileRunProgramm:=false;
+  FGeneralParams.GrpcServerPort:=4041;
   FGeneralParams.EmulationTormozaKKT:=false;
   FGeneralParams.PauseTormozovKKTInSeconds:=60;
 
-  if not FileExists(CSV_INPUT_GENERAL_PARAMS) then
+  if not FileExists(CSV_PATH_BEGIN+FUserNameOfWindows+CSV_INPUT_GENERAL_PARAMS) then
   begin
-    LogMessage('Предупреждение: Файл с параметрами запуска программы не найден: ' + CSV_INPUT_GENERAL_PARAMS);
+    LogMessage('Предупреждение: Файл с параметрами запуска программы не найден: ' + CSV_PATH_BEGIN+FUserNameOfWindows+CSV_INPUT_GENERAL_PARAMS);
     Exit;
   end;
 
   Lines := TStringList.Create;
   try
-    Lines.LoadFromFile(CSV_INPUT_GENERAL_PARAMS, TEncoding.UTF8);
+    Lines.LoadFromFile(CSV_PATH_BEGIN+FUserNameOfWindows+CSV_INPUT_GENERAL_PARAMS, TEncoding.UTF8);
 
     if Lines.Count < 2 then Exit;
 
     // Вторая строка - данные (первая - заголовок)
     Fields := Lines[1].Split([';']);
-    if Length(Fields) < 3 then
+    if Length(Fields) < 12 then
     begin
-      LogMessage('ОШИБКА: Недостаточно параметров в CSV файле (ожидается 10, получено ' + IntToStr(Length(Fields)) + ')');
+      LogMessage('ОШИБКА: Недостаточно параметров в CSV файле (ожидается не менее 12, получено ' + IntToStr(Length(Fields)) + ')');
       Exit;
     end;
 
@@ -350,8 +372,19 @@ begin
       FGeneralParams.EmulMistFromOISM := SameText(Trim(Fields[7]), 'Да');
       FGeneralParams.OpenConnectOnRunProgramm:=SameText(Trim(Fields[8]), 'Да');
       FGeneralParams.KeepConnectWhileRunProgramm:=SameText(Trim(Fields[9]), 'Да');
-      FGeneralParams.EmulationTormozaKKT:=SameText(Trim(Fields[10]), 'Нет');
+      FGeneralParams.EmulationTormozaKKT:=SameText(Trim(Fields[10]), 'Да');
       FGeneralParams.PauseTormozovKKTInSeconds := StrToIntDef(Trim(Fields[11]), 60);
+
+      // Поле 13 необязательно: прежние CSV из 12 полей остаются совместимыми.
+      if Length(Fields) > 12 then
+      begin
+        FGeneralParams.GrpcServerPort := StrToIntDef(Trim(Fields[12]), -1);
+        if (FGeneralParams.GrpcServerPort < 0) or (FGeneralParams.GrpcServerPort > 65535) then
+        begin
+          LogMessage('ПРЕДУПРЕЖДЕНИЕ: GrpcServerPort должен быть в диапазоне 0..65535; используется 4041');
+          FGeneralParams.GrpcServerPort := 4041;
+        end;
+      end;
 
       LogMessage('Параметры запуска программы: ComPort=' + IntToStr(FGeneralParams.NumComPort) +
                  ', vklRR=' + BoolToStr(FGeneralParams.vklRR, true) +
@@ -362,6 +395,7 @@ begin
                  ', EmulMist=' + BoolToStr(FGeneralParams.EmulMistFromOISM, False) +
                  ', OpenConnectOnRunProgramm=' + BoolToStr(FGeneralParams.OpenConnectOnRunProgramm, False) +
                  ', KeepConnectWhileRunProgramm=' + BoolToStr(FGeneralParams.KeepConnectWhileRunProgramm, False) +
+                 ', GrpcServerPort=' + IntToStr(FGeneralParams.GrpcServerPort) +
                  ', EmulationTormozaKKT=' + BoolToStr(FGeneralParams.EmulationTormozaKKT, False) +
                  ', PauseTormozovKKTInSeconds=' + IntToStr(FGeneralParams.PauseTormozovKKTInSeconds)
                  );
@@ -381,15 +415,15 @@ var
 begin
   Result := False;
   
-  if not FileExists(CSV_INPUT_PARAMS) then
+  if not FileExists(CSV_PATH_BEGIN+FUserNameOfWindows+CSV_INPUT_PARAMS) then
   begin
-    LogMessage('ОШИБКА: Файл с параметрами чека не найден: ' + CSV_INPUT_PARAMS);
+    LogMessage('ОШИБКА: Файл с параметрами чека не найден: ' + CSV_PATH_BEGIN+FUserNameOfWindows+CSV_INPUT_PARAMS);
     Exit;
   end;
   
   Lines := TStringList.Create;
   try
-    Lines.LoadFromFile(CSV_INPUT_PARAMS, TEncoding.UTF8);
+    Lines.LoadFromFile(CSV_PATH_BEGIN+FUserNameOfWindows+CSV_INPUT_PARAMS, TEncoding.UTF8);
     
     if Lines.Count < 2 then Exit;
     
@@ -464,8 +498,8 @@ begin
       R := FCheckCache[i];
       Lines.Add(MarkResultToStr(R));
     end;
-    
-    Lines.SaveToFile(CSV_OUTPUT_RESULTS, TEncoding.UTF8);
+
+    Lines.SaveToFile(CSV_PATH_BEGIN+FUserNameOfWindows+CSV_OUTPUT_RESULTS, TEncoding.UTF8);
     Result := True;
     
     LogMessage('Сохранено результатов: ' + IntToStr(Length(FCheckCache)));
@@ -493,7 +527,7 @@ begin
               IntToStr(TotalMarks) + ';' + 
               IntToStr(CheckedMarks));
     
-    Lines.SaveToFile(CSV_PROGRESS_INFO, TEncoding.UTF8);
+    Lines.SaveToFile(CSV_PATH_BEGIN+FUserNameOfWindows+CSV_PROGRESS_INFO, TEncoding.UTF8);
   finally
     Lines.Free;
   end;
@@ -598,6 +632,13 @@ begin
   ErrorCode := 0;
   ErrorDescription := 'OK';
   CloseConnection := not DonCloseConnectionWithKKTCheckBox.Checked; // Закрываем соединение после выполнения
+  if FMarkValidationBlocked then
+  begin
+    ErrorCode := -1;
+    ErrorDescription := 'Команда ККТ заблокирована: состояние проверки КМ не определено. Выполните отмену/новый чек';
+    LogMessage(ErrorDescription);
+    Exit;
+  end;
 
   try
     LogMessage('=== ВЫПОЛНЕНИЕ JSON КОМАНДЫ ===');
@@ -618,6 +659,11 @@ begin
         else
           fptr.setSingleSetting(fptr.LIBFPTR_SETTING_PORT, fptr.LIBFPTR_PORT_USB);
         fptr.setSingleSetting(fptr.LIBFPTR_SETTING_TIME_ZONE, ComboBoxTimeZone.ItemIndex + 1);
+        if CheckRRVkl.Checked then
+        begin
+          fptr.setSingleSetting('GrpcServerPort', IntToStr(FGeneralParams.GrpcServerPort));
+          LogMessage('Сервер запросов ДТО: GrpcServerPort=' + IntToStr(FGeneralParams.GrpcServerPort));
+        end;
         fptr.applySingleSettings;
         fptr.open;
         
@@ -625,10 +671,12 @@ begin
         begin
           ErrorCode := fptr.errorCode;
           ErrorDescription := fptr.errorDescription;
+          LabelConnectionWithKKT.Caption := 'disconnected: ' + ErrorDescription;
           LogMessage('ОШИБКА подключения к ККТ: ' + ErrorDescription);
           Exit;
         end;
       end;
+      LabelConnectionWithKKT.Caption := 'connected';
     end;
     
     // Выполняем JSON команду через драйвер
@@ -667,7 +715,11 @@ begin
     if CloseConnection and not CheckBoxEmulationKKT.Checked then
     begin
       fptr.close;
-      LogMessage('Отключились от ККТ');
+      if fptr.isOpened then
+        LabelConnectionWithKKT.Caption := 'connected'
+      else
+        LabelConnectionWithKKT.Caption := 'disconnected';
+      LogMessage('Состояние после отключения от ККТ: ' + LabelConnectionWithKKT.Caption);
     end;
     
     Result := (ErrorCode = 0);
@@ -697,17 +749,17 @@ begin
     LogMessage('=== ОБРАБОТКА КОМАНДЫ ПЕЧАТИ ЧЕКА ===');
     
     // Проверяем наличие файла с запросом
-    if not FileExists(CSV_RECEIPT_REQUEST) then
+    if not FileExists(CSV_PATH_BEGIN+FUserNameOfWindows+CSV_RECEIPT_REQUEST) then
     begin
-      LogMessage('ОШИБКА: Файл с JSON чека не найден: ' + CSV_RECEIPT_REQUEST);
+      LogMessage('ОШИБКА: Файл с JSON чека не найден: ' + CSV_PATH_BEGIN+FUserNameOfWindows+CSV_RECEIPT_REQUEST);
       Exit;
     end;
-    
+
     // Читаем JSON из файла
     try
       var Lines := TStringList.Create;
       try
-        Lines.LoadFromFile(CSV_RECEIPT_REQUEST, TEncoding.UTF8);
+        Lines.LoadFromFile(CSV_PATH_BEGIN+FUserNameOfWindows+CSV_RECEIPT_REQUEST, TEncoding.UTF8);
         RequestJSON := Lines.Text;
         LogMessage('Прочитан JSON чека, размер: ' + IntToStr(Length(RequestJSON)) + ' символов');
       finally
@@ -738,8 +790,8 @@ begin
       ResponseLines := TStringList.Create;
       try
         ResponseLines.Text := ResponseObj.ToString;
-        ResponseLines.SaveToFile(CSV_RECEIPT_RESPONSE, TEncoding.UTF8);
-        LogMessage('✓ Результат сохранен в файл: ' + CSV_RECEIPT_RESPONSE);
+        ResponseLines.SaveToFile(CSV_PATH_BEGIN+FUserNameOfWindows+CSV_RECEIPT_RESPONSE, TEncoding.UTF8);
+        LogMessage('✓ Результат сохранен в файл: ' + CSV_PATH_BEGIN+FUserNameOfWindows+CSV_RECEIPT_RESPONSE);
       finally
         ResponseLines.Free;
       end;
@@ -749,7 +801,7 @@ begin
     
     // Удаляем файл запроса после обработки
     try
-      TFile.Delete(CSV_RECEIPT_REQUEST);
+      TFile.Delete(CSV_PATH_BEGIN+FUserNameOfWindows+CSV_RECEIPT_REQUEST);
       LogMessage('✓ Файл запроса удален');
     except
       on E: Exception do
@@ -772,7 +824,7 @@ begin
           ResponseLines := TStringList.Create;
           try
             ResponseLines.Text := ResponseObj.ToString;
-            ResponseLines.SaveToFile(CSV_RECEIPT_RESPONSE, TEncoding.UTF8);
+            ResponseLines.SaveToFile(CSV_PATH_BEGIN+FUserNameOfWindows+CSV_RECEIPT_RESPONSE, TEncoding.UTF8);
           finally
             ResponseLines.Free;
           end;
@@ -802,14 +854,14 @@ var
 begin
   try
     // Проверяем существование папки команд
-    if not TDirectory.Exists(COMMAND_PATH) then
+    if not TDirectory.Exists(CSV_PATH_BEGIN+FUserNameOfWindows+COMMAND_PATH) then
     begin
-      TDirectory.CreateDirectory(COMMAND_PATH);
+      TDirectory.CreateDirectory(CSV_PATH_BEGIN+FUserNameOfWindows+COMMAND_PATH);
       Exit;
     end;
 
     // Получаем все файлы из папки команд
-    CommandFiles := TDirectory.GetFiles(COMMAND_PATH, '*.*');
+    CommandFiles := TDirectory.GetFiles(CSV_PATH_BEGIN+FUserNameOfWindows+COMMAND_PATH, '*.*');
 
     if Length(CommandFiles) = 0 then
       Exit; // Нет команд
@@ -890,6 +942,13 @@ begin
   TimerForCommandsFrom1c.Enabled:=true;
 end;
 
+procedure TCheckMarksForm.TimerInicalizationTimer(Sender: TObject);
+begin
+ LogMessage('отрабатываение таймера подключения к оборудованию');
+ TimerInicalization.Enabled:=false;
+ ButtonConnectToKKTClick(Sender);
+end;
+
 procedure TCheckMarksForm.ButtonGetMarksForCheckClick(Sender: TObject);
 begin
   LabelResultCommandCode.Caption:='0';
@@ -905,7 +964,7 @@ begin
     CheckBoxEmulWaitOISM.Checked:=FCheckParams.EmulWaitFromOISM;
     //CheckBoxEmulMistOISM.Checked:=FCheckParams.EmulMistFromOISM;
 
-    ComboBoxTimeZone.ItemIndex:=FCheckParams.TimeZone-1;
+    ComboBoxTimeZone.ItemIndex:=FCheckParams.TimeZone-2;
   end;
   if not(LoadInputMarksFromCSV()) then begin
     LabelResultCommandCode.Caption := '100';
@@ -1032,14 +1091,34 @@ begin
   end;
 end;
 
+function GetUserFromWindows: string;
+var
+  UserName : string;
+  UserNameLen : Dword;
+begin
+  UserNameLen := 255;
+  SetLength(userName, UserNameLen);
+  if GetUserName(PChar(UserName), UserNameLen) then
+    Result := Copy(UserName,1,UserNameLen - 1)
+  else
+    Result := 'Unknown';
+end;
+
 procedure TCheckMarksForm.FormCreate(Sender: TObject);
 begin
+ FUserNameOfWindows:=GetUserFromWindows;
+ LabelUserNameOfWindows.Caption:=FUserNameOfWindows;
  FStopLog:=false;
  FClosingRecipt:=false;
+ FMarkValidationBlocked:=False;
  FLogMemo:=LogsMemo;
  
  // Инициализируем логирование в файл
  InitLogFile;
+
+ LogMessage('=== ЗАПУСК ПРОГРАММЫ ===');
+
+ if not(UseUserNameForNameOfWorkDirCheckBox.Checked) then FUserNameOfWindows:='';
 
  LoadGeneralParamsFromCSV();
 
@@ -1060,16 +1139,20 @@ begin
  FCheckParams.EmulWaitFromOISM:=FGeneralParams.EmulWaitFromOISM;
 
  DonCloseConnectionWithKKTCheckBox.Checked:=FGeneralParams.KeepConnectWhileRunProgramm;
+ if CheckRRVkl.Checked and not DonCloseConnectionWithKKTCheckBox.Checked then
+   LogMessage('ПРЕДУПРЕЖДЕНИЕ: РР включен, но соединение с ККТ закрывается после операций; сервер запросов ДТО может быть недоступен ТСПиОТ. Для постоянной связи включите KeepConnectWhileRunProgramm');
 
- ComboBoxTimeZone.ItemIndex:=FGeneralParams.TimeZone-1;
-
+ ComboBoxTimeZone.ItemIndex:=FGeneralParams.TimeZone-2;
 
  CreateDriverKKTButtonClick(self);
 
- if FGeneralParams.OpenConnectOnRunProgramm then begin
-   ButtonConnectToKKTClick(self);
+ if FGeneralParams.OpenConnectOnRunProgramm and not CheckBoxEmulationKKT.Checked
+    and not VarIsEmpty(fptr) and not VarIsNull(fptr) then
+ begin
+   LogMessage('включение таймера подключения к оборудованию');
+   TimerInicalization.Enabled:=true;
  end;
-
+ LogMessage('=== ЗАПУСК ПРОГРАММЫ END ===');
 end;
 
 // Добавление или обновление результата проверки в кэше
@@ -1164,7 +1247,7 @@ var
   FileAge: TDateTime;
   DeletedCount: Integer;
 begin
-  LogDir := LOGS_PATH;
+  LogDir := CSV_PATH_BEGIN+FUserNameOfWindows+LOGS_PATH;
   
   if not TDirectory.Exists(LogDir) then
     Exit;
@@ -1208,7 +1291,7 @@ procedure TCheckMarksForm.InitLogFile;
 var
   LogDir: string;
 begin
-  LogDir := LOGS_PATH;
+  LogDir := CSV_PATH_BEGIN+FUserNameOfWindows+LOGS_PATH;
   
   // Создаем папку для логов, если её нет
   if not TDirectory.Exists(LogDir) then
@@ -1235,7 +1318,7 @@ begin
   try
     var Lines := TStringList.Create;
     try
-      Lines.Add('=== Лог работы программы проверки марок ===');
+      Lines.Add('=== Лог работы программы проверки марок версии ' + LabelVersionCaption.Caption + ' ===');
       Lines.Add('Дата запуска: ' + FormatDateTime('dd.mm.yyyy hh:nn:ss', Now));
       Lines.Add('===================================');
       Lines.Add('');
@@ -1305,24 +1388,33 @@ end;
 
 procedure TCheckMarksForm.CheckMarkOnKKTButtonClick(Sender: TObject);
 var
-    mark: String;
-    validationResult: Integer;
-    statusPlannedOfMark: integer;
-    jsonOut: string;
-    jsonAnswer: string;
-    errorCode: Integer;
-    errorDescr: string;
-    actionType: string;
-    success: Boolean;
-    cachedResult: TMarkResult;
-    markResult: TMarkResult;
-begin
-    // Очищаем результаты предыдущей проверки
-    ResultCodeCheckOnKKTEdit.Text := '0';
-    ResultDescrCheckOnKKTEdit.Text := RESULT_COMMAND_OK;
+  mark: string;
+  statusPlannedOfMark: Integer;
+  cachedResult: TMarkResult;
+  Backend: TAtolMarkValidationBackend;
+  Outcome: TMarkValidationResult;
+  ValidationStarted, MarkAccepted: Boolean;
 
-    mark := EditCurrentMark.Text;
-    
+  procedure SetFailure(Code: Integer; const Description: string);
+  begin
+    if Code = 0 then Code := -1;
+    ResultCodeCheckOnKKTEdit.Text := IntToStr(Code);
+    ResultDescrCheckOnKKTEdit.Text := Description;
+    LogMessage('Ошибка проверки ККТ [' + IntToStr(Code) + ']: ' + Description);
+  end;
+
+begin
+  ResultCodeCheckOnKKTEdit.Text := '-1';
+  ResultDescrCheckOnKKTEdit.Text := 'Проверка ККТ не выполнена';
+  EditValidationResult.Text := '0';
+  mark := EditCurrentMark.Text;
+
+  if FMarkValidationBlocked then
+  begin
+    SetFailure(-1, 'Состояние проверки КМ не определено. Выполните отмену/новый чек для сброса проверки');
+    Exit;
+  end;
+
     // ПРОВЕРЯЕМ КЭШ - если марка уже проверялась, берем результат из кэша (по Base64)
     if FindMarkInCache(EditCurrentMarkBase64.Text, cachedResult) then
     begin
@@ -1352,149 +1444,105 @@ begin
       Exit;
     end;
 
-    ButtonConnectToKKTClick(self);
+  if mark = '' then
+  begin
+    SetFailure(-1, 'Не указана марка для проверки ККТ');
+    Exit;
+  end;
 
-    statusPlannedOfMark:=fptr.LIBFPTR_MES_PIECE_SOLD;
-    if ComboBoxCheckType.ItemIndex = 1 then begin
-      statusPlannedOfMark:=fptr.LIBFPTR_MES_PIECE_RETURN;
-    end;
-    if (ComboBoxCheckType.ItemIndex <> 0) and (ComboBoxCheckType.ItemIndex <> 2) then begin
-      if ComboBoxCheckType.ItemIndex = 1 then statusPlannedOfMark:=fptr.LIBFPTR_MES_DRY_FOR_SALE;
-      if ComboBoxCheckType.ItemIndex = 3 then statusPlannedOfMark:=fptr.LIBFPTR_MES_DRY_RETURN;
-      if ComboBoxCheckType.ItemIndex = 4 then statusPlannedOfMark:=fptr.LIBFPTR_MES_PIECE_FOR_SALE;
-      if ComboBoxCheckType.ItemIndex = 5 then statusPlannedOfMark:=fptr.LIBFPTR_MES_DRY_SOLD;
-      if ComboBoxCheckType.ItemIndex = 6 then statusPlannedOfMark:=fptr.LIBFPTR_MES_UNCHANGED;
-    end;
-
-    //mark := '014494550435306821QXYXSALGLMYQQ' + #29 + '91EE06' + #29 + '92YWCXbmK6SN8vvwoxZFk7WAY8WoJNMGGr6Cgtiuja04c=';
-    // Запускаем проверку КМ в синхронном режиме с таймаутом 2 минуты (120000 миллисекунд)
-    fptr.setParam(fptr.LIBFPTR_PARAM_MARKING_CODE_TYPE, fptr.LIBFPTR_MCT12_AUTO);
-    fptr.setParam(fptr.LIBFPTR_PARAM_MARKING_CODE, mark);
-    fptr.setParam(fptr.LIBFPTR_PARAM_MARKING_CODE_STATUS, statusPlannedOfMark);
-    //fptr.setParam(fptr.LIBFPTR_PARAM_QUANTITY, 1.000);
-    //fptr.setParam(fptr.LIBFPTR_PARAM_MEASUREMENT_UNIT, fptr.LIBFPTR_IU_PIECE);
-    fptr.setParam(fptr.LIBFPTR_PARAM_MARKING_PROCESSING_MODE, 0);
-    //fptr.setParam(fptr.LIBFPTR_PARAM_MARKING_FRACTIONAL_QUANTprocedure TCheckMarksForm.ButtonCheckPermitMarkClick(Sender: TObject);
-
-    //fptr.setParam(fptr.LIBFPTR_PARAM_TIMEOUT, 120000);
-    fptr.beginMarkingCodeValidation;
-
-    // Выполнение данного потока останавливается до тех пор, пока не будет выполнена проверка КМ!
-    ErrorCode := fptr.errorCode;
-    errorDescr:=fptr.errorDescription;
-    LogMessage(IntToStr(ErrorCode));
-    LogMessage(errorDescr);
-    if ErrorCode = 401 then begin //процедура проверки марки уже была запущена
-      LogMessage('Процедура проверки уже была запущена');
-      fptr.cancelMarkingCodeValidation;
-
-      fptr.setParam(fptr.LIBFPTR_PARAM_MARKING_CODE_TYPE, fptr.LIBFPTR_MCT12_AUTO);
-      fptr.setParam(fptr.LIBFPTR_PARAM_MARKING_CODE, mark);
-      fptr.setParam(fptr.LIBFPTR_PARAM_MARKING_CODE_STATUS, statusPlannedOfMark);
-      //fptr.setParam(fptr.LIBFPTR_PARAM_QUANTITY, 1.000);
-      //fptr.setParam(fptr.LIBFPTR_PARAM_MEASUREMENT_UNIT, fptr.LIBFPTR_IU_PIECE);
-      fptr.setParam(fptr.LIBFPTR_PARAM_MARKING_PROCESSING_MODE, 0);
-      //fptr.setParam(fptr.LIBFPTR_PARAM_MARKING_FRACTIONAL_QUANTITY, '1/2');
-      //fptr.setParam(fptr.LIBFPTR_PARAM_TIMEOUT, 120000);
-      fptr.beginMarkingCodeValidation;
-      ErrorCode := fptr.errorCode;
-      errorDescr:=fptr.errorDescription;
-      LogMessage(IntToStr(ErrorCode));
-      LogMessage(errorDescr);
-    end;
-
-
-    if (ErrorCode <> 0) and not (CheckBoxEmulationKKT.Checked) then begin
-      errorDescr:=fptr.errorDescription;
-      ResultCodeCheckOnKKTEdit.Text:=IntToStr(ErrorCode);
-      ResultDescrCheckOnKKTEdit.Text:=errorDescr;
-
-      LogMessage(IntToStr(ErrorCode));
-      LogMessage(errorDescr);
-      ButtonDissconnectFromKKTClick(self);
-      exit;
-    end;
-
-
-    if CheckBoxEmulWaitOISM.Checked then begin
-     LogMessage('Делаем паузцу в 5 секунд');
-     Sleep(5000);
-     LogMessage('Пауза закончилась');
-    end;
-
-    // Ожидание ответа от ОИСМ с таймаутом 60 секунд
-    var StartTime := Now;
-    var TimeoutSeconds := 60;
-
-    while True and not (CheckBoxEmulationKKT.Checked) do
-    begin
-        sleep(300);
-        fptr.getMarkingCodeValidationStatus;
-        ErrorCode := fptr.errorCode;
-        errorDescr:=fptr.errorDescription;
-
-        // Проверка ошибки при запросе статуса
-        if (ErrorCode <> 0) then begin
-          ResultCodeCheckOnKKTEdit.Text:=IntToStr(ErrorCode);
-          ResultDescrCheckOnKKTEdit.Text:=errorDescr;
-          LogMessage('Ошибка при запросе статуса проверки марки: ' + errorDescr);
-          ButtonDissconnectFromKKTClick(self);
-          exit;
-        end;
-        
-        // Проверка готовности результата
-        if fptr.getParamBool(fptr.LIBFPTR_PARAM_MARKING_CODE_VALIDATION_READY) then
-            break;
-        
-        // Проверка таймаута (60 секунд)
-        if SecondsBetween(Now, StartTime) > TimeoutSeconds then
-        begin
-          ErrorCode := -1;
-          errorDescr := 'Таймаут ожидания ответа от ОИСМ (' + IntToStr(TimeoutSeconds) + ' сек)';
-          ResultCodeCheckOnKKTEdit.Text := IntToStr(ErrorCode);
-          ResultDescrCheckOnKKTEdit.Text := errorDescr;
-          LogMessage('ОШИБКА: ' + errorDescr);
-          ButtonDissconnectFromKKTClick(self);
-          exit;
-        end;
-    end;
-    //fptr.getMarkingCodeValidationStatus;
-   {*if (not fptr.getParamBool(fptr.LIBFPTR_PARAM_MARKING_CODE_VALIDATION_READY)
-        and not (CheckBoxEmulationKKT.Checked)) or CheckBoxEmulMistOISM.Checked then
-    begin
-      ErrorCode := fptr.errorCode;
-      errorDescr:=fptr.errorDescription;
-      ResultCodeCheckOnKKTEdit.Text:=IntToStr(ErrorCode);
-      ResultDescrCheckOnKKTEdit.Text:=errorDescr;
-
-      ButtonDissconnectFromKKTClick(self);
-      exit;
-    end;*}
-    validationResult := fptr.getParamInt(fptr.LIBFPTR_PARAM_MARKING_CODE_ONLINE_VALIDATION_RESULT);
-
-    actionType := 'acceptMarkingCode';
-    fptr.acceptMarkingCode;
-
-    ErrorCode := fptr.errorCode;
-    errorDescr:=fptr.errorDescription;
-
-    LogMessage('validationResult = ' + IntToStr(validationResult));
-
-    ButtonDissconnectFromKKTClick(self);
-
-    if CheckBoxEmulationKKT.Checked and (errorCode <> 0) then begin
-      errorCode:=0;
-      validationResult:=15;
-    end;
-
-    ResultCodeCheckOnKKTEdit.Text := IntToStr(errorCode);
-    ResultDescrCheckOnKKTEdit.Text := errorDescr;
-    EditValidationResult.Text:=IntToStr(validationResult);
-
-    if (errorCode = 0) or not (CheckBoxEmulationKKT.Checked) then
-      LogMessage('Проверка марки выполнена успешно')
+  // Эмуляция не должна отправлять команды реальной ККТ.
+  if CheckBoxEmulationKKT.Checked then
+  begin
+    if CheckBoxEmulWaitOISM.Checked then Sleep(5000);
+    if CheckBoxEmulMistOISM.Checked then
+      SetFailure(-1, 'Эмуляция ошибки проверки ККТ')
     else
-      LogMessage('Ошибка проверки марки');
+    begin
+      ResultCodeCheckOnKKTEdit.Text := '0';
+      ResultDescrCheckOnKKTEdit.Text := 'OK (эмуляция ККТ)';
+      EditValidationResult.Text := '15';
+      LogMessage('Проверка ККТ выполнена в режиме эмуляции');
+    end;
+    Exit;
+  end;
+
+  if VarIsEmpty(fptr) or VarIsNull(fptr) then
+  begin
+    SetFailure(-1, 'Драйвер ККТ не инициализирован');
+    Exit;
+  end;
+
+  Backend := TAtolMarkValidationBackend.Create(fptr, LogMessage);
+  ValidationStarted := False;
+  MarkAccepted := False;
+  try
+    try
+      ButtonConnectToKKTClick(Self);
+      if not fptr.isOpened then
+      begin
+        SetFailure(fptr.errorCode, 'Не удалось подключиться к ККТ: ' + string(fptr.errorDescription));
+        Exit;
+      end;
+
+      // Планируемый статус берётся из задания марки, а не из списка «Продажа/Возврат».
+      case ComboBoxPlannedStatusOfMark.ItemIndex of
+        0: statusPlannedOfMark := fptr.LIBFPTR_MES_PIECE_SOLD;
+        1: statusPlannedOfMark := fptr.LIBFPTR_MES_DRY_FOR_SALE;
+        2: statusPlannedOfMark := fptr.LIBFPTR_MES_PIECE_RETURN;
+        3: statusPlannedOfMark := fptr.LIBFPTR_MES_DRY_RETURN;
+        4: statusPlannedOfMark := fptr.LIBFPTR_MES_PIECE_FOR_SALE;
+        5: statusPlannedOfMark := fptr.LIBFPTR_MES_DRY_SOLD;
+        6: statusPlannedOfMark := fptr.LIBFPTR_MES_UNCHANGED;
+      else
+        SetFailure(-1, 'Не выбран планируемый статус марки');
+        Exit;
+      end;
+
+      if CheckBoxEmulWaitOISM.Checked then Sleep(5000);
+      ValidationStarted := True;
+      Outcome := ValidateMark(Backend, mark, statusPlannedOfMark);
+      FMarkValidationBlocked := not Outcome.CleanupSucceeded;
+      EditValidationResult.Text := IntToStr(Outcome.Data.ValidationResult);
+      if (Outcome.Error.Code = 0) and Outcome.Accepted then
+      begin
+        MarkAccepted := True;
+        ResultCodeCheckOnKKTEdit.Text := '0';
+        ResultDescrCheckOnKKTEdit.Text := RESULT_COMMAND_OK;
+        if not Outcome.Data.RequestSent then
+          ResultDescrCheckOnKKTEdit.Text := 'ККТ приняла КМ. Запрос на сервер ОИСМ не отправлен. РР проверяется отдельно';
+        if Outcome.Warning.Code <> 0 then
+        begin
+          // КМ уже принят ККТ; 1С показывает этот код как предупреждение и пробивает чек.
+          ResultCodeCheckOnKKTEdit.Text := IntToStr(Outcome.Warning.Code);
+          ResultDescrCheckOnKKTEdit.Text := Outcome.Warning.Description + '. КМ принят без ответа ОИСМ';
+        end;
+        LogMessage('Процедура ФФД завершена: попыток=' + IntToStr(Outcome.Attempts) +
+          ', validationResult=' + EditValidationResult.Text +
+          '. Это не результат проверки разрешительного режима');
+      end
+      else
+        SetFailure(Outcome.Error.Code, Outcome.Error.Description);
+    except
+      on E: Exception do
+      begin
+        if ValidationStarted then FMarkValidationBlocked := True;
+        SetFailure(-1, 'Исключение проверки ККТ: ' + E.Message);
+      end;
+    end;
+  finally
+    Backend.Free;
+    // Соединение закрывается максимум один раз, после всех попыток, с учётом Keep.
+    try
+      ButtonDissconnectFromKKTClick(Self);
+    except
+      on E: Exception do
+      begin
+        LogMessage('Ошибка завершения работы с соединением ККТ: ' + E.Message);
+        if MarkAccepted then
+          SetFailure(-1, 'Ошибка завершения работы с соединением ККТ: ' + E.Message);
+      end;
+    end;
+  end;
 end;
 
 procedure TCheckMarksForm.CreateDriverKKTButtonClick(Sender: TObject);
@@ -1513,6 +1561,35 @@ begin
   end;
   version:=fptr.version;
   LabelInitDriverKKT.Caption:=version;
+  LogMessage('Версия драйвера АТОЛ: ' + version);
+end;
+
+procedure TCheckMarksForm.Button1Click(Sender: TObject);
+var
+  Cassier:string;
+  errorCode:integer;
+begin
+  LabelResultCommandCode.Caption:='0';
+  LabelResultCommandDescr.Caption:=RESULT_COMMAND_OK;
+  //if LabelStatusOfShift.Caption <> TEXT_SHIFT_CLOSED then exit;
+
+  fptr.setParam(fptr.LIBFPTR_PARAM_REPORT_TYPE, fptr.LIBFPTR_RT_X);
+  fptr.report;
+
+  //Cassier:=EditCassierName.Text;
+  //fptr.setParam(1021, Cassier);
+  ////fptr.setParam(1203, '123456789047');
+  //fptr.operatorLogin;
+
+  //fptr.openShift;
+  ////fptr.checkDocumentClosed;
+
+  LabelResultCommandDescr.Caption:=RESULT_COMMAND_OK;
+  errorCode:=fptr.errorCode;
+  if errorCode <> 0 then begin
+    LabelResultCommandCode.Caption:=IntToStr(errorCode);
+    LabelResultCommandDescr.Caption:=fptr.errorDescription;
+  end;
 end;
 
 procedure TCheckMarksForm.ButtonAddToTableClick(Sender: TObject);
@@ -1561,7 +1638,11 @@ begin
   markResult.KKTCheckDescription := StringReplace(ResultDescrCheckOnKKTEdit.Text, ',', '',  [rfReplaceAll]);
   markResult.ValidationResult := validationResult;
   markResult.PermitCheckCode := StrToIntDef(EditCodeResultCheckPermit.Text, 0);
-  markResult.PermitCheckDescription :=  StringReplace(EditDescrResultPerimtCheck.Text, ',', '',  [rfReplaceAll]);
+  //markResult.PermitCheckDescription :=  StringReplace(EditDescrResultPerimtCheck.Text, ',', '',  [rfReplaceAll]);
+  markResult.PermitCheckDescription:=StringReplace(StringReplace(
+      StringReplace(EditDescrResultPerimtCheck.Text, ',', '', [rfReplaceAll]),
+      #13#10, ' ', [rfReplaceAll]),
+    #10, ' ', [rfReplaceAll]);
   markResult.UUID := EditUUID.Text;
   markResult.TimeStamp := EditTimeStamp.Text;
   markResult.Inst := EditInst.Text;
@@ -1589,19 +1670,26 @@ begin
 end;
 
 function TCheckMarksForm.MarkResultToStr(R: TMarkResult):string;
+  function CSVText(const Value: string): string;
+  begin
+    // Потребитель 1С делит строку по ';' без поддержки кавычек CSV.
+    Result := StringReplace(Value, ';', ',', [rfReplaceAll]);
+    Result := StringReplace(Result, #13, ' ', [rfReplaceAll]);
+    Result := StringReplace(Result, #10, ' ', [rfReplaceAll]);
+  end;
 begin
   Result:=Format('%d;%s;%d;%s;%d;%d;%s;%s;%s;%s;%s', [
         R.Position,
         R.MarkCodeBase64,
         R.KKTCheckCode,
-        R.KKTCheckDescription,
+        CSVText(R.KKTCheckDescription),
         R.ValidationResult,
         R.PermitCheckCode,
-        R.PermitCheckDescription,
-        R.UUID,
-        R.TimeStamp,
-        R.Inst,
-        R.Ver
+        CSVText(R.PermitCheckDescription),
+        CSVText(R.UUID),
+        CSVText(R.TimeStamp),
+        CSVText(R.Inst),
+        CSVText(R.Ver)
       ]);
 end;
 
@@ -1629,7 +1717,7 @@ begin
     // Сохраняем результаты в CSV
     if SaveResultsToCSV then
     begin
-      LogMessage('✓ Результаты сохранены в файл: ' + CSV_OUTPUT_RESULTS);
+      LogMessage('✓ Результаты сохранены в файл: ' + CSV_PATH_BEGIN+FUserNameOfWindows+CSV_OUTPUT_RESULTS);
       LogMessage('✓ Файл готов для чтения 1С');
     end
     else
@@ -1722,32 +1810,77 @@ begin
   
   FClosingRecipt := False;
 
-  if FileExists(CSV_OUTPUT_RESULTS) then
+  if FileExists(CSV_PATH_BEGIN+FUserNameOfWindows+CSV_OUTPUT_RESULTS) then
     try
-      TFile.Delete(CSV_OUTPUT_RESULTS);
+      TFile.Delete(CSV_PATH_BEGIN+FUserNameOfWindows+CSV_OUTPUT_RESULTS);
     except
     end;
   LogMessage('✓ Все данные очищены, готов к новому чеку');
 end;
 
 procedure TCheckMarksForm.ButtonCancelReciptClick(Sender: TObject);
+var
+  Backend: TAtolMarkValidationBackend;
+  CancelError: TMarkValidationError;
+  CommandResult, DriverError: Integer;
+  DriverDescription: string;
 begin
   LogMessage('=== КНОПКА: ОТМЕНИТЬ ЧЕК ===');
-  TimerCheckMarks.Enabled:=false;
-  // Отменяем текущую проверку марки, если она идет
+  TimerCheckMarks.Enabled := False;
+  LabelResultCommandCode.Caption := '0';
+  LabelResultCommandDescr.Caption := RESULT_COMMAND_OK;
+  Backend := nil;
   try
-    ButtonConnectToKKTClick(self);
-    fptr.cancelMarkingCodeValidation;
-    fptr.clearMarkingCodeValidationResult;
-    LogMessage('✓ Проверка марки отменена');
-  except
-    on E: Exception do
-      LogMessage('Ошибка отмены проверки: ' + E.Message);
-  end;
-  ButtonDissconnectFromKKTClick(self);
+    try
+      if CheckBoxEmulationKKT.Checked then
+      begin
+        if FMarkValidationBlocked then
+          raise Exception.Create('Эмуляция не может сбросить неизвестное состояние реальной ККТ');
+      end
+      else
+      begin
+        ButtonConnectToKKTClick(Self);
+        if not fptr.isOpened then
+          raise Exception.Create('Нет соединения с ККТ для отмены проверки');
+        Backend := TAtolMarkValidationBackend.Create(fptr, LogMessage);
+        CancelError := Backend.CancelCheck;
+        if CancelError.Code <> 0 then
+          raise Exception.CreateFmt('cancelMarkingCodeValidation [%d]: %s',
+            [CancelError.Code, CancelError.Description]);
 
-  // Очищаем все данные
-  ButtonRecieptWasClosedClick(self);
+        // Только явная отмена/новый чек очищает всю таблицу КМ, не отдельная попытка.
+        CommandResult := fptr.clearMarkingCodeValidationResult;
+        DriverError := fptr.errorCode;
+        DriverDescription := fptr.errorDescription;
+        if (CommandResult <> 0) or (DriverError <> 0) then
+          raise Exception.CreateFmt('clearMarkingCodeValidationResult: return=%d, error=%d, %s',
+            [CommandResult, DriverError, DriverDescription]);
+      end;
+
+      FMarkValidationBlocked := False;
+      ButtonRecieptWasClosedClick(Self);
+      LogMessage('Проверка марки отменена, состояние ККТ сброшено');
+    except
+      on E: Exception do
+      begin
+        FMarkValidationBlocked := True;
+        LabelResultCommandCode.Caption := '-1';
+        LabelResultCommandDescr.Caption := 'Ошибка отмены проверки: ' + E.Message;
+        LogMessage(LabelResultCommandDescr.Caption);
+      end;
+    end;
+  finally
+    Backend.Free;
+    if not CheckBoxEmulationKKT.Checked and not VarIsEmpty(fptr) and not VarIsNull(fptr) then
+    begin
+      try
+        ButtonDissconnectFromKKTClick(Self);
+      except
+        on E: Exception do
+          LogMessage('Ошибка соединения при завершении отмены: ' + E.Message);
+      end;
+    end;
+  end;
 end;
 
 // Функция проверки марки по разрешительному режиму через HTTP
@@ -1963,6 +2096,17 @@ var
   PermitResult: TMarkResult;
 begin
   LogMessage('=== ПРОВЕРКА МАРКИ ПО РАЗРЕШИТЕЛЬНОМУ РЕЖИМУ ===');
+  if FMarkValidationBlocked then
+  begin
+    EditCodeResultCheckPermit.Text := '-1';
+    EditDescrResultPerimtCheck.Text := 'РР не запущен: не завершена проверка КМ в ККТ. Выполните отмену/новый чек';
+    EditUUID.Clear;
+    EditTimeStamp.Clear;
+    EditInst.Clear;
+    EditVer.Clear;
+    LogMessage(EditDescrResultPerimtCheck.Text);
+    Exit;
+  end;
   
   // Получаем параметры - ВАЖНО: для РР нужна марка в Base64!
   MarkCodeBase64 := EditCurrentMarkBase64.Text;
@@ -2015,15 +2159,69 @@ begin
     if CheckBoxEmulationKKT.Checked then LabelStatusOfShift.Caption:=TEXT_SHIFT_OPENNED
 end;
 
+procedure TCheckMarksForm.ButtonCloseShiftClick(Sender: TObject);
+var
+  Cassier:string;
+  dateTime:TDateTime;
+  errorCode, receiptNumber, shiftNumber:integer;
+  fiscalSign:string;
+begin
+  LabelResultCommandCode.Caption:='0';
+  LabelResultCommandDescr.Caption:=RESULT_COMMAND_OK;
+
+  LabelShiftNumber.Caption:='';
+  LabelDocNumber.Caption:='';
+  LabelDateDoc.Caption:='';
+  LabelSignDoc.Caption:='';
+
+  if LabelStatusOfShift.Caption <> TEXT_SHIFT_OPENNED then exit;
+
+  Cassier:=EditCassierName.Text;
+  fptr.setParam(1021, Cassier);
+  //fptr.setParam(1203, '123456789047');
+  fptr.operatorLogin;
+
+  fptr.setParam(fptr.LIBFPTR_PARAM_REPORT_TYPE, fptr.LIBFPTR_RT_CLOSE_SHIFT);
+  fptr.report;
+
+  LabelResultCommandDescr.Caption:=RESULT_COMMAND_OK;
+  errorCode:=fptr.errorCode;
+  if errorCode <> 0 then begin
+    LabelResultCommandCode.Caption:=IntToStr(errorCode);
+    LabelResultCommandDescr.Caption:=fptr.errorDescription;
+    exit;
+  end;
+
+  fptr.setParam(fptr.LIBFPTR_FNDT_SHIFT, fptr.LIBFPTR_FNDT_SHIFT);
+  fptr.fnQueryData;
+
+  //receiptNumber   := fptr.getParamInt(fptr.LIBFPTR_PARAM_RECEIPT_NUMBER);
+  shiftNumber     := fptr.getParamInt(fptr.LIBFPTR_PARAM_SHIFT_NUMBER);
+
+  fptr.setParam(fptr.LIBFPTR_PARAM_FN_DATA_TYPE, fptr.LIBFPTR_FNDT_LAST_DOCUMENT);
+  fptr.fnQueryData;
+
+  receiptNumber   := fptr.getParamInt(fptr.LIBFPTR_PARAM_DOCUMENT_NUMBER);
+  dateTime   := fptr.getParamInt(fptr.LIBFPTR_PARAM_DATE_TIME);
+  fiscalSign := fptr.getParamInt(fptr.LIBFPTR_PARAM_FISCAL_SIGN);
+
+  LabelShiftNumber.Caption:=IntToStr(shiftNumber);
+  LabelDocNumber.Caption:=IntToStr(receiptNumber);
+  LabelDateDoc.Caption:=DateTimeToStr(dateTime);
+  LabelSignDoc.Caption:=fiscalSign;
+end; //ButtonCloseShiftClick
+
 procedure TCheckMarksForm.ButtonConnectToKKTClick(Sender: TObject);
 var
   isOpened :boolean;
   textOfConnection:string;
   NomComPorta:integer;
   PauseTormozovKKT, CodeMist:integer;
+  wasNonConnected:boolean;
 begin
   LogMessage('=== КНОПКА: ПОДКЛЮЧИТЬСЯ К ККТ ===');
   isOpened := fptr.isOpened;
+  wasNonConnected:=not isOpened;
   if CheckBoxEmulationKKT.Checked then begin
    if (POS('not connected', LabelConnectionWithKKT.Caption) = 0) and
         (POS('connected', LabelConnectionWithKKT.Caption) > 0)
@@ -2040,9 +2238,15 @@ begin
     end
     else fptr.setSingleSetting(fptr.LIBFPTR_SETTING_PORT, fptr.LIBFPTR_PORT_USB);
     fptr.setSingleSetting(fptr.LIBFPTR_SETTING_TIME_ZONE, ComboBoxTimeZone.ItemIndex + 1);
+    if CheckRRVkl.Checked and not CheckBoxEmulationKKT.Checked then
+    begin
+      fptr.setSingleSetting('GrpcServerPort', IntToStr(FGeneralParams.GrpcServerPort));
+      LogMessage('Сервер запросов ДТО: GrpcServerPort=' + IntToStr(FGeneralParams.GrpcServerPort));
+    end;
     fptr.applySingleSettings;
     fptr.open;
     isOpened := fptr.isOpened;
+    if isOpened then textOfConnection := 'connected';
     if CheckBoxEmulationKKT.Checked and CheckBoxEmulationTormoz.Checked then begin
       Val(EditPauseTormozaKKTEmul.Text, PauseTormozovKKT, CodeMist);
       if CodeMist <> 0 then PauseTormozovKKT:=60; //по умолчанию 60 секунд
@@ -2056,9 +2260,9 @@ begin
     textOfConnection:='connected - эмуляция ККТ';
   end;
   if not(isOpened) then
-    textOfConnection:=fptr.errorDescription;
-  if CheckBoxEmulationKKT.Checked then
-    LabelConnectionWithKKT.Caption:=textOfConnection;
+    textOfConnection:='disconnected: ' + fptr.errorDescription;
+  LabelConnectionWithKKT.Caption:=textOfConnection;
+  LogMessage(textOfConnection);
   if isOpened then LogMessage('подключились к ККТ');
   LogMessage('=== КНОПКА: ПОДКЛЮЧИТЬСЯ К ККТ - END ===');
 end;
@@ -2092,8 +2296,11 @@ procedure TCheckMarksForm.ButtonDissconnectFromKKTClick(Sender: TObject);
 begin
   if not DonCloseConnectionWithKKTCheckBox.Checked then begin
     fptr.close;
-    LogMessage('отключились от ККТ');
-    LabelConnectionWithKKT.Caption:='disconnected';
+    if fptr.isOpened then
+      LabelConnectionWithKKT.Caption:='connected'
+    else
+      LabelConnectionWithKKT.Caption:='disconnected';
+    LogMessage('Состояние после отключения от ККТ: ' + LabelConnectionWithKKT.Caption);
   end else begin
     LogMessage('отключились от ККТ - не отключаемся');
     //LabelConnectionWithKKT.Caption:='disconnected';

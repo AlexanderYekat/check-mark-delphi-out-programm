@@ -1,4 +1,11 @@
 __history/
 __recovery/
-__recovery/
 Win32/
+
+# локальные файлы Delphi IDE и промежуточные результаты сборки
+*.identcache
+*.dproj.local
+*.local
+*.stat
+*.dcu
+*.~*

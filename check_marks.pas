@@ -569,7 +569,7 @@ begin
       ResponseObj.AddPair('warnings', '');
     end
     // Если это закрытие смены (closeShift)
-    else if Pos('closeShift', LowerCase(RequestJSON)) > 0 then
+    else if Pos('closeshift', LowerCase(RequestJSON)) > 0 then
     begin
       FiscalParamsObj := TJSONObject.Create;
       
@@ -588,7 +588,7 @@ begin
       ResponseObj.AddPair('warnings', '');
     end
     // Если это открытие смены (openShift)
-    else if Pos('openShift', LowerCase(RequestJSON)) > 0 then
+    else if Pos('openshift', LowerCase(RequestJSON)) > 0 then
     begin
       FiscalParamsObj := TJSONObject.Create;
       
